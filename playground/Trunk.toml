@@ -1,2 +1,3 @@
 [build]
 dist = "dist"
+public_url = "/rsx-a11y/"
