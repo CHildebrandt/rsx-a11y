@@ -168,7 +168,7 @@ use rsx_a11y::prelude::*;
 
 #[test]
 fn no_accessibility_errors() {
-    let summary = check_project(Path::new("src"));
+    let summary = check_project(&Path::new(env!("CARGO_MANIFEST_DIR")));
 
     let errors: Vec<_> = summary.diagnostics
         .iter()
@@ -186,7 +186,7 @@ use rsx_a11y::prelude::*;
 
 #[test]
 fn no_missing_alt_text() {
-    let summary = check_project(Path::new("src"));
+    let summary = check_project(&Path::new(env!("CARGO_MANIFEST_DIR")));
 
     let alt_issues: Vec<_> = summary.diagnostics
         .iter()
