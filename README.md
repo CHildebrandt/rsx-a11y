@@ -5,7 +5,7 @@
 <h1 align="center">rsx-a11y</h1>
 
 <p align="center">
-    <a href="todo">Playground</a>
+    <a href="https://childebrandt.github.io/rsx-a11y/">Playground</a>
 </p>
 
 A static analysis tool that checks for ARIA and accessibility issues in Rust web framework code. Works with Rust web frameworks such as [Yew](https://yew.rs), [Leptos](https://leptos.dev) and [Dioxus](https://dioxuslabs.com) by parsing JSX-like macros `html!`, `view!`, and `rsx!` directly.
