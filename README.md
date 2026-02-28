@@ -8,6 +8,13 @@
     <a href="https://childebrandt.github.io/rsx-a11y/">Playground</a>
 </p>
 
+<p align="center">
+    <a href="https://crates.io/crates/rsx-a11y"><img src="https://img.shields.io/crates/v/rsx-a11y.svg" alt="crates.io"/></a>
+    <a href="https://docs.rs/rsx-a11y"><img src="https://docs.rs/rsx-a11y/badge.svg" alt="docs.rs"/></a>
+    <a href="https://github.com/CHildebrandt/rsx-a11y/actions/workflows/build-and-test.yml"><img src="https://github.com/CHildebrandt/rsx-a11y/actions/workflows/build-and-test.yml/badge.svg" alt="build"/></a>
+    <a href="https://github.com/CHildebrandt/rsx-a11y/blob/main/LICENSE"><img src="https://img.shields.io/crates/l/rsx-a11y.svg" alt="license"/></a>
+</p>
+
 A static analysis tool that checks for ARIA and accessibility issues in Rust web framework code. Works with Rust web frameworks such as [Yew](https://yew.rs), [Leptos](https://leptos.dev) and [Dioxus](https://dioxuslabs.com) by parsing JSX-like macros `html!`, `view!`, and `rsx!` directly.
 
 Inspired by [`eslint-plugin-jsx-a11y`](https://github.com/jsx-eslint/eslint-plugin-jsx-a11y) — the same idea, but for Rust.
