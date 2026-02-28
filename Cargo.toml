@@ -3,7 +3,7 @@ members = ["playground"]
 
 [package]
 name = "rsx-a11y"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 description = "A linting tool for checking ARIA and accessibility attributes in Rust web frameworks (Yew, Leptos, Dioxus)"
 license = "MIT"

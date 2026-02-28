@@ -163,37 +163,44 @@ rsx-a11y = { version = "*", default-features = false }
 Then call `check_project` and assert on the returned `LintSummary`:
 
 ```rust
-use std::path::Path;
-use rsx_a11y::prelude::*;
+#[cfg(test)]
+mod accessibility_tests {
+    use std::path::Path;
+    use rsx_a11y::prelude::*;
 
-#[test]
-fn no_accessibility_errors() {
-    let summary = check_project(&Path::new(env!("CARGO_MANIFEST_DIR")));
+    #[test]
+    fn no_accessibility_errors() {
+        let summary = check_project(&Path::new(env!("CARGO_MANIFEST_DIR")));
 
-    let errors: Vec<_> = summary.diagnostics
-        .iter()
-        .filter(|d| d.severity == Severity::Error)
-        .collect();
+        let errors: Vec<_> = summary.diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
 
-    assert!(errors.is_empty(), "accessibility errors found: {errors:#?}");
+        assert!(errors.is_empty(), "accessibility errors found: {errors:#?}");
+    }
 }
 ```
 
 `check_project` discovers `.rs` files, parses RSX macros, runs all 36 lint rules, and returns a `LintSummary` with sorted diagnostics — no filtering is applied, so you can filter by rule, severity, or file path after the fact:
 
 ```rust
-use rsx_a11y::prelude::*;
 
-#[test]
-fn no_missing_alt_text() {
-    let summary = check_project(&Path::new(env!("CARGO_MANIFEST_DIR")));
+mod accessibility_tests {
+    use std::path::Path;
+    use rsx_a11y::prelude::*;
 
-    let alt_issues: Vec<_> = summary.diagnostics
-        .iter()
-        .filter(|d| d.rule == Rule::AltText)
-        .collect();
+    #[test]
+    fn no_missing_alt_text() {
+        let summary = check_project(&Path::new(env!("CARGO_MANIFEST_DIR")));
 
-    assert!(alt_issues.is_empty(), "missing alt text: {alt_issues:#?}");
+        let alt_issues: Vec<_> = summary.diagnostics
+            .iter()
+            .filter(|d| d.rule == Rule::AltText)
+            .collect();
+
+        assert!(alt_issues.is_empty(), "missing alt text: {alt_issues:#?}");
+    }
 }
 ```
 
