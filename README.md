@@ -15,7 +15,8 @@ Inspired by [`eslint-plugin-jsx-a11y`](https://github.com/jsx-eslint/eslint-plug
 ## Quick Start
 
 ```sh
-cargo install --path .
+# Install the CLI
+cargo install rsx-a11y
 
 # Lint a file
 rsx-a11y src/components/navbar.rs
