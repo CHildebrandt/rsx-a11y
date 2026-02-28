@@ -1,5 +1,5 @@
 <p align="center" dir="auto">
-    <img src="assets/logo.png" width="200" alt="logo"/>
+    <img src="https://raw.githubusercontent.com/CHildebrandt/rsx-a11y/main/assets/logo.png" width="200" alt="logo"/>
 </p>
 
 <h1 align="center">rsx-a11y</h1>
