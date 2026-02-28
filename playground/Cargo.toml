@@ -1,0 +1,12 @@
+[package]
+name = "playground"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rsx-a11y = { path = "..", default-features = false }
+leptos = { version = "0.8", features = ["csr"] }
+console_error_panic_hook = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+web-sys = { version = "0.3", features = ["HtmlTextAreaElement"] }

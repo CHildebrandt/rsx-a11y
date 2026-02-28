@@ -1,0 +1,37 @@
+[workspace]
+members = ["playground"]
+
+[package]
+name = "rsx-a11y"
+version = "0.1.0"
+edition = "2024"
+description = "A linting tool for checking ARIA and accessibility attributes in Rust web frameworks (Yew, Leptos, Dioxus)"
+license = "MIT"
+
+[features]
+default = ["cli"]
+cli = ["clap", "walkdir", "colored", "rayon", "dunce"]
+
+[dependencies]
+syn = { version = "2", features = ["full", "visit", "parsing"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"], optional = true }
+walkdir = { version = "2", optional = true }
+colored = { version = "3", optional = true }
+rayon = { version = "1", optional = true }
+dunce = { version = "1", optional = true }
+strum = { version = "0.28.0", features = ["derive"] }
+rstml = "0.12.1"
+
+[[bin]]
+name = "rsx-a11y"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[profile.release]
+opt-level = 'z'
+codegen-units = 1
+lto = true
