@@ -186,7 +186,7 @@ mod accessibility_tests {
 `check_project` discovers `.rs` files, parses RSX macros, runs all 36 lint rules, and returns a `LintSummary` with sorted diagnostics — no filtering is applied, so you can filter by rule, severity, or file path after the fact:
 
 ```rust
-
+#[cfg(test)]
 mod accessibility_tests {
     use std::path::Path;
     use rsx_a11y::prelude::*;
