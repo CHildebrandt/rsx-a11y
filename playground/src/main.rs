@@ -237,6 +237,11 @@ fn App() -> impl IntoView {
                     </div>
                 </div>
             </div>
+            <footer class="footer">
+                "Powered by "
+                <a href="https://github.com/CHildebrandt/rsx-a11y" target="_blank">"rsx-a11y"</a>
+                " — ARIA linting for Rust web frameworks"
+            </footer>
         </div>
     }
 }
