@@ -27,6 +27,13 @@ contain breaking changes).
   `img-redundant-alt` substring matches.
 - `anchor-ambiguous-text` now checks link content, not only `aria-label`.
 - Columns are reported 1-based.
+- Only `html!`/`html_nested!`/`view!`/`rsx!` bodies are parsed as markup, so
+  ordinary macros such as `assert!(1 < 2)` no longer cause parse errors.
+- Negative numbers such as `tabindex: -1` are read as static values.
+- Root-level Yew `html! { if … { … } }` is linted.
+- Misspelled `attr:aria-*` (Leptos) and `aria_*` (Dioxus) names are reported.
+- Symbolic links (to files or directories) are not followed when collecting
+  files, so nothing outside the scanned directory is linted.
 
 ### Added
 
@@ -52,7 +59,8 @@ contain breaking changes).
   elements, per-macro errors and ignore directives. `ParseError` is a struct
   with `kind`, `file`, `line` and `message`.
 - **Breaking:** `--format json` writes one object with `diagnostics`,
-  `parse_errors` and `summary`, instead of a bare array.
+  `parse_errors` and `summary` (including `files_with_parse_errors`), instead
+  of a bare array.
 - **Breaking:** `Tag`, `Role`, `Aria` and `Rule` implement `FromStr`/`Display`
   (replacing inherent `from_str`/`to_string`), are `Copy`, and are
   `#[non_exhaustive]`. `HtmlAttribute::value` is an `AttrValue` (with a new
