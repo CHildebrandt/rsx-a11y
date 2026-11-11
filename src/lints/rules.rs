@@ -179,8 +179,13 @@ fn aria_activedescendant_has_tabindex(el: &HtmlElement, cx: &mut Emitter<'_>) {
 
 fn aria_props(el: &HtmlElement, cx: &mut Emitter<'_>) {
     for attr in &el.attributes {
+        // Check the name without a Leptos `attr:` prefix, but report it as
+        // written.
         if let A::Unknown(name) = &attr.name
-            && name.starts_with("aria-")
+            && name
+                .strip_prefix("attr:")
+                .unwrap_or(name)
+                .starts_with("aria-")
         {
             cx.on_attr(
                 attr,

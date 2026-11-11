@@ -308,6 +308,7 @@ fn test_non_markup_macros_are_ignored() {
     let parsed = parse_source(
         r#"
         fn c() {
+            assert!(1 < 2);
             let v = vec![1, 2, 3];
             println!("{v:?}");
             assert_eq!(v.len(), 3, "len {}", v.len());
@@ -445,5 +446,11 @@ fn test_dioxus_syntax_error_is_reported() {
 #[test]
 fn test_jsx_style_rsx_still_uses_jsx_parser() {
     let elements = parse_test(r#"fn c() { rsx! { <img src="x.png" /> } }"#);
+    assert_eq!(tags(&elements), [Tag::Img]);
+}
+
+#[test]
+fn test_qualified_markup_macro_is_parsed() {
+    let elements = parse_test(r#"fn c() { leptos::view! { <img src="x.png" /> } }"#);
     assert_eq!(tags(&elements), [Tag::Img]);
 }
