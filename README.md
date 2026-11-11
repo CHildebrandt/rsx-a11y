@@ -189,7 +189,7 @@ Options:
       "line": 13, "column": 13, "element": "img", "help": "…" }
   ],
   "parse_errors": [ { "kind": "markup", "file": "src/broken.rs", "message": "…" } ],
-  "summary": { "files_scanned": 3, "files_checked": 3, "errors": 1, "warnings": 2, "infos": 0, "parse_errors": 1 }
+  "summary": { "files_scanned": 3, "files_checked": 3, "errors": 1, "warnings": 2, "infos": 0, "parse_errors": 1, "files_with_parse_errors": 1 }
 }
 ```
 

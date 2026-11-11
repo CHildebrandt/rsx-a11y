@@ -9,7 +9,7 @@ use rstml::{Parser, ParserConfig};
 use syn::parse::ParseStream;
 use syn::spanned::Spanned;
 
-use super::markup::{MElement, MNode, position};
+use super::markup::{MElement, MNode, literal_value, position};
 use super::{AttrValue, HtmlAttribute};
 use crate::dom::AttributeName;
 
@@ -44,13 +44,19 @@ pub(crate) fn parse(tokens: TokenStream) -> (Vec<MNode>, Vec<syn::Error>) {
         })
     };
     let (nodes, diagnostics) = Parser::new(config).parse_recoverable(tokens).split_vec();
-    let errors = diagnostics.into_iter().map(syn::Error::from).collect();
     let stash = stash.borrow();
-    (Converter { stash: &stash }.nodes(&nodes), errors)
+    let converter = Converter {
+        stash: &stash,
+        errors: RefCell::new(diagnostics.into_iter().map(syn::Error::from).collect()),
+    };
+    let nodes = converter.nodes(&nodes);
+    (nodes, converter.errors.into_inner())
 }
 
 struct Converter<'a> {
     stash: &'a [TokenStream],
+    /// Errors from the macro and from markup inside stashed blocks.
+    errors: RefCell<Vec<syn::Error>>,
 }
 
 impl Converter<'_> {
@@ -109,26 +115,26 @@ impl Converter<'_> {
                     let index = ident.to_string().strip_prefix(PLACEHOLDER)?.parse().ok()?;
                     self.stash.get::<usize>(index)
                 })
-                .map_or(MNode::Dynamic, stashed),
+                .map_or(MNode::Dynamic, |body| self.stashed(body)),
             _ => MNode::Dynamic,
         }
     }
-}
 
-/// A block that was not valid Rust: markup if it starts with `<`, else
-/// something dynamic (such as Yew's `{ for items }`).
-fn stashed(body: &TokenStream) -> MNode {
-    let starts_with_markup = matches!(
-        body.clone().into_iter().next(),
-        Some(TokenTree::Punct(p)) if p.as_char() == '<'
-    );
-    if starts_with_markup {
-        let (nodes, errors) = parse(body.clone());
-        if errors.is_empty() {
-            return MNode::Fragment(nodes);
+    /// A block that was not valid Rust: markup if it starts with `<`, else
+    /// something dynamic (such as Yew's `{ for items }`). Errors in the
+    /// markup are reported for the enclosing macro.
+    fn stashed(&self, body: &TokenStream) -> MNode {
+        let starts_with_markup = matches!(
+            body.clone().into_iter().next(),
+            Some(TokenTree::Punct(p)) if p.as_char() == '<'
+        );
+        if !starts_with_markup {
+            return MNode::Dynamic;
         }
+        let (nodes, errors) = parse(body.clone());
+        self.errors.borrow_mut().extend(errors);
+        MNode::Fragment(nodes)
     }
-    MNode::Dynamic
 }
 
 /// Yew's shorthand `{onclick}`, meaning `onclick={onclick}`.
@@ -155,7 +161,8 @@ fn attribute(keyed: &KeyedAttribute) -> HtmlAttribute {
         KeyedAttributeValue::None => AttrValue::Bare,
         KeyedAttributeValue::Binding(_) => AttrValue::Dynamic,
         KeyedAttributeValue::Value(_) => keyed
-            .value_literal_string()
+            .value()
+            .and_then(literal_value)
             .map_or(AttrValue::Dynamic, AttrValue::Static),
     };
     HtmlAttribute {
