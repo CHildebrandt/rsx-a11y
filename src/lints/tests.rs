@@ -556,3 +556,13 @@ fn test_rule_names_round_trip() {
     assert!(Rule::all().all(|r| !r.description().starts_with(char::is_whitespace)));
     assert!(Rule::all().all(|r| r.guidelines().iter().all(|g| g.starts_with("https://"))));
 }
+
+#[test]
+fn test_misspelled_prefixed_aria_attribute() {
+    let diags = lint_source(r#"fn c() { view! { <div attr:aria-labl="x"></div> } }"#);
+    let d = diags
+        .iter()
+        .find(|d| d.rule == Rule::AriaProps)
+        .expect("aria-props");
+    assert!(d.message.contains("`attr:aria-labl`"), "{}", d.message);
+}
