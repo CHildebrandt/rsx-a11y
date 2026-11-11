@@ -1659,7 +1659,7 @@ pub struct LintDiagnostic {
     pub file: String,
     /// Line number (1-based).
     pub line: usize,
-    /// Column number (0-based).
+    /// Column number (1-based).
     pub column: usize,
     /// The element name where the issue was found.
     pub element: Tag,

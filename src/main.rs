@@ -1,7 +1,7 @@
 use std::fs::File;
-use std::io::{self, BufWriter, Write};
+use std::io::{self, BufWriter, IsTerminal, Write};
 use std::path::{Path, PathBuf};
-use std::process;
+use std::process::ExitCode;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use clap::Parser;
@@ -9,14 +9,24 @@ use rayon::prelude::*;
 use strum::IntoEnumIterator;
 use walkdir::WalkDir;
 
-use rsx_a11y::diagnostics::{self, OutputFormat};
-use rsx_a11y::lints::{self, LintDiagnostic, Rule};
-use rsx_a11y::parser;
+use rsx_a11y::diagnostics::{self, OutputFormat, Report};
+use rsx_a11y::lints::{self, LintDiagnostic, Rule, Severity};
+use rsx_a11y::parser::{self, ParseError};
+
+/// Exit code when every file was linted and no error-level issue was found.
+const EXIT_OK: u8 = 0;
+/// Exit code when at least one error-level accessibility issue was found.
+const EXIT_LINT_ERRORS: u8 = 1;
+/// Exit code for usage errors, I/O failures, or files that could not be parsed.
+const EXIT_FAILURE: u8 = 2;
 
 /// rsx-a11y: Lint ARIA and accessibility attributes in Rust web frameworks.
 ///
 /// Checks `html!` (Yew), `view!` (Leptos), and `rsx!` (Dioxus) macros for
 /// accessibility issues based on the WAI-ARIA specifications.
+///
+/// Exit status: 0 = no errors, 1 = accessibility errors found,
+/// 2 = invalid usage or files that could not be read/parsed.
 #[derive(Parser, Debug)]
 #[command(name = "rsx-a11y", version, about, long_about = None)]
 struct Cli {
@@ -36,16 +46,16 @@ struct Cli {
     #[arg(long)]
     list_rules: bool,
 
-    /// Specific lint rules to enable (comma-separated). If not set, all rules are enabled.
-    #[arg(long, value_delimiter = ',')]
-    only: Option<Vec<String>>,
+    /// Only enable specific rules (comma-separated). If not set, all rules are enabled.
+    #[arg(long, value_delimiter = ',', value_parser = parse_rule, value_name = "RULES")]
+    only: Option<Vec<Rule>>,
 
-    /// Lint rules to disable (comma-separated).
-    #[arg(long, value_delimiter = ',')]
-    skip: Option<Vec<String>>,
+    /// Disable specific rules (comma-separated).
+    #[arg(long, value_delimiter = ',', value_parser = parse_rule, value_name = "RULES")]
+    skip: Option<Vec<Rule>>,
 
-    /// Write diagnostic output to a file instead of stdout (useful for snapshot testing).
-    #[arg(long)]
+    /// Write output to a file instead of stdout.
+    #[arg(long, value_name = "PATH")]
     out_file: Option<PathBuf>,
 }
 
@@ -64,16 +74,39 @@ impl From<Format> for OutputFormat {
     }
 }
 
-fn main() {
-    let cli = Cli::parse();
+/// Parse a rule name for `--only` / `--skip`, rejecting unknown names so a
+/// typo can never silently disable linting.
+fn parse_rule(s: &str) -> Result<Rule, String> {
+    Rule::from_str(s.trim()).ok_or_else(|| {
+        let names: Vec<String> = Rule::iter().map(|r| r.to_string()).collect();
+        format!(
+            "unknown rule '{s}'. Run `rsx-a11y --list-rules` to see all rules.\n  valid rules: {}",
+            names.join(", ")
+        )
+    })
+}
 
-    if cli.list_rules {
-        println!("Available lint rules:");
-        println!();
-        for rule in Rule::iter() {
-            println!("  {}", rule.to_string());
+fn main() -> ExitCode {
+    let cli = Cli::parse();
+    match run(cli) {
+        Ok(code) => ExitCode::from(code),
+        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => ExitCode::from(EXIT_OK),
+        Err(e) => {
+            eprintln!("Error: {e}");
+            ExitCode::from(EXIT_FAILURE)
         }
-        process::exit(0);
+    }
+}
+
+fn run(cli: Cli) -> io::Result<u8> {
+    if cli.list_rules {
+        let mut out = io::stdout().lock();
+        writeln!(out, "Available lint rules:")?;
+        writeln!(out)?;
+        for rule in Rule::iter() {
+            writeln!(out, "  {}", rule.to_string())?;
+        }
+        return Ok(EXIT_OK);
     }
 
     let format: OutputFormat = cli.format.into();
@@ -81,108 +114,109 @@ fn main() {
 
     if !path.exists() {
         eprintln!("Error: path '{}' does not exist.", path.display());
-        process::exit(1);
+        return Ok(EXIT_FAILURE);
     }
 
     // Refuse to scan filesystem roots — almost certainly a mistake.
     // On Windows, "/" resolves to the current drive root (e.g. C:\), not
     // the current directory. Use "." for the current directory instead.
-    if let Ok(canonical) = dunce::canonicalize(path) {
-        if canonical.parent().is_none() {
-            eprintln!(
-                "Error: '{}' resolves to filesystem root '{}'. Did you mean '.'?",
-                path.display(),
-                canonical.display()
-            );
-            process::exit(1);
-        }
+    if let Ok(canonical) = dunce::canonicalize(path)
+        && canonical.parent().is_none()
+    {
+        eprintln!(
+            "Error: '{}' resolves to filesystem root '{}'. Did you mean '.'?",
+            path.display(),
+            canonical.display()
+        );
+        return Ok(EXIT_FAILURE);
     }
 
     let start_time = std::time::Instant::now();
-
     let rust_files = collect_rust_files(path);
 
-    if rust_files.is_empty() {
-        if format == OutputFormat::Pretty {
-            eprintln!("No Rust files found in '{}'.", path.display());
-        }
-        process::exit(0);
-    }
-
     if format == OutputFormat::Pretty {
-        eprintln!("Scanning {} file(s)...", rust_files.len());
+        if rust_files.is_empty() {
+            eprintln!("No Rust files found in '{}'.", path.display());
+        } else {
+            eprintln!("Scanning {} file(s)...", rust_files.len());
+        }
     }
 
-    let CliLintSummary {
-        diagnostics: all_diagnostics,
-        parse_errors,
-        files_checked,
-    } = parse_files(
-        &rust_files,
-        cli.only
-            .as_ref()
-            .map(|only| only.iter().filter_map(|s| Rule::from_str(s)).collect()),
-        cli.skip
-            .as_ref()
-            .map(|skip| skip.iter().filter_map(|s| Rule::from_str(s)).collect()),
-        cli.quiet,
-    );
+    let filter = RuleFilter {
+        only: cli.only,
+        skip: cli.skip,
+        only_errors: cli.quiet,
+    };
+    let result = lint_files(&rust_files, &filter);
 
-    // Build writer: either a file or stdout.
-    let mut writer: Box<dyn Write> = match cli.out_file {
-        Some(ref path) => {
-            let file = File::create(path).unwrap_or_else(|e| {
-                eprintln!("Error: could not create '{}': {}", path.display(), e);
-                process::exit(1);
-            });
-            Box::new(BufWriter::new(file))
-        }
+    // Colors only make sense for an interactive terminal.
+    let to_terminal = cli.out_file.is_none() && io::stdout().is_terminal();
+    let color = to_terminal && std::env::var_os("NO_COLOR").is_none();
+
+    let mut writer: Box<dyn Write> = match &cli.out_file {
+        Some(out) => match File::create(out) {
+            Ok(file) => Box::new(BufWriter::new(file)),
+            Err(e) => {
+                eprintln!("Error: could not create '{}': {}", out.display(), e);
+                return Ok(EXIT_FAILURE);
+            }
+        },
         None => Box::new(BufWriter::new(io::stdout().lock())),
     };
 
-    diagnostics::print_diagnostics(&all_diagnostics, format, &mut *writer);
+    let report = Report {
+        diagnostics: &result.diagnostics,
+        parse_errors: &result.parse_errors,
+        files_scanned: rust_files.len(),
+        files_checked: result.files_checked,
+        duration: start_time.elapsed(),
+    };
+    diagnostics::write_report(&report, format, color, &mut *writer)?;
+    // Flush explicitly: buffered output must reach its destination before we
+    // report the exit status.
+    writer.flush()?;
 
-    if format == OutputFormat::Pretty {
-        for err in &parse_errors {
-            eprintln!("Parse error: {}", err);
-        }
-    }
-
-    diagnostics::print_summary(
-        &all_diagnostics,
-        files_checked,
-        start_time.elapsed(),
-        format,
-        &mut *writer,
-    );
-
-    // Exit with non-zero if there are errors
-    let has_errors = all_diagnostics
+    let code = if !result.parse_errors.is_empty() {
+        EXIT_FAILURE
+    } else if result
+        .diagnostics
         .iter()
-        .any(|d| d.severity == lints::Severity::Error);
-    if has_errors {
-        process::exit(1);
-    }
+        .any(|d| d.severity == Severity::Error)
+    {
+        EXIT_LINT_ERRORS
+    } else {
+        EXIT_OK
+    };
+    Ok(code)
 }
 
-struct CliLintSummary {
-    diagnostics: Vec<LintDiagnostic>,
-    parse_errors: Vec<String>,
-    files_checked: usize,
-}
-
-fn parse_files(
-    rust_files: &[PathBuf],
+struct RuleFilter {
     only: Option<Vec<Rule>>,
     skip: Option<Vec<Rule>>,
     only_errors: bool,
-) -> CliLintSummary {
+}
+
+impl RuleFilter {
+    fn keep(&self, d: &LintDiagnostic) -> bool {
+        self.only.as_ref().is_none_or(|only| only.contains(&d.rule))
+            && self
+                .skip
+                .as_ref()
+                .is_none_or(|skip| !skip.contains(&d.rule))
+            && (!self.only_errors || d.severity == Severity::Error)
+    }
+}
+
+struct LintResult {
+    diagnostics: Vec<LintDiagnostic>,
+    parse_errors: Vec<ParseError>,
+    files_checked: usize,
+}
+
+fn lint_files(rust_files: &[PathBuf], filter: &RuleFilter) -> LintResult {
     let files_checked = AtomicUsize::new(0);
 
-    // Process files in parallel with rayon.
-    // Use fold + reduce to accumulate diagnostics directly, avoiding an
-    // intermediate Vec<Result<…>> allocation.
-    let (mut all_diagnostics, parse_errors) = rust_files
+    let (mut diagnostics, mut parse_errors) = rust_files
         .par_iter()
         .fold(
             || (Vec::new(), Vec::new()),
@@ -191,24 +225,11 @@ fn parse_files(
                     Ok(elements) => {
                         if !elements.is_empty() {
                             files_checked.fetch_add(1, Ordering::Relaxed);
-
-                            // Build a lazy iterator chain — filters run without
-                            // allocating an intermediate Vec.
-                            let file_diags = lints::run_all_lints(&elements)
-                                .filter(|d| {
-                                    only.as_ref()
-                                        .map_or(true, |only| only.iter().any(|o| *o == d.rule))
-                                })
-                                .filter(|d| {
-                                    skip.as_ref()
-                                        .map_or(true, |skip| !skip.iter().any(|o| *o == d.rule))
-                                })
-                                .filter(|d| !only_errors || d.severity == lints::Severity::Error);
-
-                            diags.extend(file_diags);
+                            diags
+                                .extend(lints::run_all_lints(&elements).filter(|d| filter.keep(d)));
                         }
                     }
-                    Err(e) => errors.push(e.to_string()),
+                    Err(e) => errors.push(e),
                 }
                 (diags, errors)
             },
@@ -222,15 +243,13 @@ fn parse_files(
             },
         );
 
-    // Sort diagnostics by file, then line, then column
-    all_diagnostics.sort_unstable_by(|a, b| {
-        a.file
-            .cmp(&b.file)
-            .then(a.line.cmp(&b.line))
-            .then(a.column.cmp(&b.column))
+    diagnostics.sort_unstable_by(|a, b| {
+        (a.file.as_str(), a.line, a.column).cmp(&(b.file.as_str(), b.line, b.column))
     });
-    CliLintSummary {
-        diagnostics: all_diagnostics,
+    parse_errors.sort_unstable_by(|a, b| a.file.cmp(&b.file));
+
+    LintResult {
+        diagnostics,
         parse_errors,
         files_checked: files_checked.load(Ordering::Relaxed),
     }
@@ -242,7 +261,7 @@ fn parse_files(
 /// Paths are returned relative to the current working directory when possible.
 fn collect_rust_files(path: &Path) -> Vec<PathBuf> {
     if path.is_file() {
-        if path.extension().map_or(false, |ext| ext == "rs") {
+        if path.extension().is_some_and(|ext| ext == "rs") {
             return vec![path.to_path_buf()];
         }
         return Vec::new();
@@ -263,7 +282,7 @@ fn collect_rust_files(path: &Path) -> Vec<PathBuf> {
         .follow_links(false)
         .into_iter()
         .filter_entry(|entry| {
-            if entry.file_type().is_dir() {
+            if entry.file_type().is_dir() && entry.depth() > 0 {
                 let name = entry.file_name().to_string_lossy();
                 return !matches!(name.as_ref(), "target" | "node_modules")
                     && !name.starts_with('.');
@@ -272,21 +291,19 @@ fn collect_rust_files(path: &Path) -> Vec<PathBuf> {
         })
         .filter_map(|entry| entry.ok())
         .filter(|entry| {
-            entry.file_type().is_file() && entry.path().extension().map_or(false, |ext| ext == "rs")
+            entry.file_type().is_file() && entry.path().extension().is_some_and(|ext| ext == "rs")
         })
         .filter_map(|entry| {
             // Hard check: the file's canonical path must start with root.
-            // Use dunce::canonicalize here too so both sides have consistent
-            // prefix handling on Windows (std::canonicalize adds \\?\ prefix).
             let canonical = dunce::canonicalize(entry.path()).ok()?;
             if !canonical.starts_with(&root) {
                 return None;
             }
             // Return a relative path when possible for cleaner output.
-            if let Some(ref cwd) = cwd {
-                if let Ok(rel) = canonical.strip_prefix(cwd) {
-                    return Some(rel.to_path_buf());
-                }
+            if let Some(cwd) = &cwd
+                && let Ok(rel) = canonical.strip_prefix(cwd)
+            {
+                return Some(rel.to_path_buf());
             }
             Some(canonical)
         })

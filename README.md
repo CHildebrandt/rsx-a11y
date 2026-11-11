@@ -129,6 +129,31 @@ Options:
   -V, --version            Print version
 ```
 
+### Exit status
+
+| Code | Meaning |
+|------|---------|
+| `0` | No error-level issues (warnings/info may still be reported) |
+| `1` | At least one error-level accessibility issue was found |
+| `2` | Invalid usage (e.g. an unknown rule name), or a file could not be read or parsed — unparsed files are never treated as clean |
+
+### JSON output
+
+`--format json` writes a single object:
+
+```json
+{
+  "diagnostics": [
+    { "rule": "alt-text", "message": "…", "severity": "error", "file": "src/app.rs",
+      "line": 13, "column": 13, "element": "img", "help": "…" }
+  ],
+  "parse_errors": [ { "kind": "markup", "file": "src/broken.rs", "message": "…" } ],
+  "summary": { "files_scanned": 3, "files_checked": 3, "errors": 1, "warnings": 2, "infos": 0, "parse_errors": 1 }
+}
+```
+
+Lines and columns are 1-based.
+
 ### Examples
 
 ```sh

@@ -2,9 +2,9 @@
 
 use std::path::Path;
 
+use rsx_a11y::check_project;
 use rsx_a11y::lints::{self, LintDiagnostic, Rule, Severity};
 use rsx_a11y::parser;
-use rsx_a11y::{check_project};
 
 fn lint_fixture(filename: &str) -> Vec<LintDiagnostic> {
     let path = format!("tests/fixtures/{}", filename);
@@ -170,7 +170,12 @@ fn test_check_project_diagnostics_are_sorted() {
         assert!(
             (a.file.as_str(), a.line, a.column) <= (b.file.as_str(), b.line, b.column),
             "Diagnostics not sorted: ({}, {}:{}) came before ({}, {}:{})",
-            a.file, a.line, a.column, b.file, b.line, b.column
+            a.file,
+            a.line,
+            a.column,
+            b.file,
+            b.line,
+            b.column
         );
     }
 }
@@ -204,7 +209,16 @@ fn test_check_project_filter_by_severity() {
 
     assert!(!errors.is_empty(), "Expected some errors in fixtures");
     assert!(!warnings.is_empty(), "Expected some warnings in fixtures");
-    assert_eq!(errors.len() + warnings.len() + summary.diagnostics.iter().filter(|d| d.severity == Severity::Info).count(), summary.diagnostics.len());
+    assert_eq!(
+        errors.len()
+            + warnings.len()
+            + summary
+                .diagnostics
+                .iter()
+                .filter(|d| d.severity == Severity::Info)
+                .count(),
+        summary.diagnostics.len()
+    );
 }
 
 #[test]
