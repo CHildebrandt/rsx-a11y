@@ -807,3 +807,30 @@ fn test_token_list_aria_values() {
     let bad = lint_source(r#"fn c() { html! { <div aria-relevant="everything"></div> } }"#);
     assert!(has_lint(&bad, Rule::AriaProptypes));
 }
+
+#[test]
+fn test_misspelled_prefixed_aria_attribute() {
+    let diags = lint_source(r#"fn c() { view! { <div attr:aria-labl="x"></div> } }"#);
+    let d = diags
+        .iter()
+        .find(|d| d.rule == Rule::AriaProps)
+        .expect("aria-props");
+    assert!(d.message.contains("`attr:aria-labl`"), "{}", d.message);
+}
+
+#[test]
+fn test_misspelled_dioxus_aria_attribute() {
+    let diags = lint_source(r#"fn A() -> Element { rsx! { div { aria_labl: "x" } } }"#);
+    let d = diags
+        .iter()
+        .find(|d| d.rule == Rule::AriaProps)
+        .expect("aria-props");
+    assert!(d.message.contains("`aria_labl`"), "{}", d.message);
+}
+
+#[test]
+fn test_negative_tabindex_is_not_focusable() {
+    let diags =
+        lint_source(r#"fn A() -> Element { rsx! { div { tabindex: -1, aria_hidden: "true" } } }"#);
+    assert!(!has_lint(&diags, Rule::NoAriaHiddenOnFocusable));
+}

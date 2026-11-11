@@ -172,18 +172,24 @@ fn App() -> impl IntoView {
                         {move || {
                             let r = result.get();
 
-                            if let Some(ref err) = r.error {
-                                let err = err.clone();
-                                return view! {
-                                    <div class="parse-error">
-                                        <strong>"Parse error: "</strong>
-                                        {err}
-                                    </div>
-                                }
-                                    .into_any();
-                            }
+                            // Parse errors are shown above any diagnostics
+                            // from the macros that did parse.
+                            let error = r
+                                .error
+                                .clone()
+                                .map(|err| {
+                                    view! {
+                                        <div class="parse-error">
+                                            <strong>"Parse error: "</strong>
+                                            {err}
+                                        </div>
+                                    }
+                                });
 
                             if r.diagnostics.is_empty() {
+                                if error.is_some() {
+                                    return error.into_any();
+                                }
                                 return view! {
                                     <div class="no-issues">
                                         "✓ No accessibility issues found!"
@@ -193,6 +199,7 @@ fn App() -> impl IntoView {
                             }
 
                             view! {
+                                {error}
                                 <div class="diagnostics-list">
                                     {r
                                         .diagnostics

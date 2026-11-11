@@ -34,6 +34,37 @@ pub(crate) struct MElement {
     pub self_closing: bool,
 }
 
+/// The value of a literal attribute expression as a string: string, char,
+/// integer, float and bool literals, plus negated numbers such as `-1`
+/// (which syn parses as a unary expression, not a literal).
+pub(crate) fn literal_value(expr: &syn::Expr) -> Option<String> {
+    match expr {
+        syn::Expr::Lit(lit) => match &lit.lit {
+            syn::Lit::Str(s) => Some(s.value()),
+            syn::Lit::Char(c) => Some(c.value().to_string()),
+            syn::Lit::Int(i) => Some(i.base10_digits().to_string()),
+            syn::Lit::Float(f) => Some(f.base10_digits().to_string()),
+            syn::Lit::Bool(b) => Some(b.value.to_string()),
+            _ => None,
+        },
+        syn::Expr::Unary(syn::ExprUnary {
+            op: syn::UnOp::Neg(_),
+            expr,
+            ..
+        }) => match expr.as_ref() {
+            syn::Expr::Lit(lit) => match &lit.lit {
+                syn::Lit::Int(i) => Some(format!("-{}", i.base10_digits())),
+                syn::Lit::Float(f) => Some(format!("-{}", f.base10_digits())),
+                _ => None,
+            },
+            _ => None,
+        },
+        syn::Expr::Paren(p) => literal_value(&p.expr),
+        syn::Expr::Group(g) => literal_value(&g.expr),
+        _ => None,
+    }
+}
+
 /// Convert a proc-macro2 start position to (line, 1-based column).
 pub(crate) fn position(lc: LineColumn) -> (usize, usize) {
     (lc.line, lc.column + 1)
