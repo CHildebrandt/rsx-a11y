@@ -1,0 +1,36 @@
+tests/fixtures/leptos_component.rs:13:13 error [alt-text] <img> element is missing an `alt` attribute.
+tests/fixtures/leptos_component.rs:16:18 error [aria-props] Invalid ARIA attribute `aria-roledescriptions` on <div>.
+tests/fixtures/leptos_component.rs:19:21 error [aria-proptypes] Invalid value "yes" for `aria-pressed` on <button>. Expected "true", "false", or "mixed".
+tests/fixtures/leptos_component.rs:22:18 error [aria-role] Invalid ARIA role "superbutton" on <div>.
+tests/fixtures/leptos_component.rs:25:18 warning [no-redundant-roles] Redundant role "navigation" on <nav>. This is the element's implicit role.
+tests/fixtures/leptos_component.rs:28:13 warning [click-events-have-key-events] <div> with click handler must also have a keyboard event handler (onkeydown, onkeyup, or onkeypress) for accessibility.
+tests/fixtures/leptos_component.rs:28:13 warning [no-static-element-interactions] <div> with event handler(s) must have a `role` attribute.
+tests/fixtures/leptos_component.rs:31:16 warning [anchor-is-valid] <a> element has an invalid `href` value "". Use a real URL, or a <button> for actions.
+tests/fixtures/leptos_component.rs:34:13 warning [media-has-caption] <video> element must have captions.
+tests/fixtures/leptos_component.rs:47:44 info [prefer-tag-over-role] Prefer using the <main> element instead of `role="main"`.
+tests/fixtures/leptos_component.rs:62:13 warning [media-has-caption] <video> element must have captions.
+tests/fixtures/yew_component.rs:13:13 error [alt-text] <img> element is missing an `alt` attribute.
+tests/fixtures/yew_component.rs:16:18 error [aria-props] Invalid ARIA attribute `aria-foo` on <div>.
+tests/fixtures/yew_component.rs:19:18 error [aria-proptypes] Invalid value "yes" for `aria-hidden` on <div>. Expected "true", "false", or "undefined".
+tests/fixtures/yew_component.rs:22:18 error [aria-role] Invalid ARIA role "banana" on <div>.
+tests/fixtures/yew_component.rs:25:19 error [aria-role] Abstract ARIA role "widget" must not be used on <span>. Abstract roles are for ontology purposes only.
+tests/fixtures/yew_component.rs:28:21 warning [no-redundant-roles] Redundant role "button" on <button>. This is the element's implicit role.
+tests/fixtures/yew_component.rs:31:21 warning [no-access-key] Avoid using the `accesskey` attribute on <button>. Access keys create keyboard shortcuts that conflict with screen reader and keyboard commands.
+tests/fixtures/yew_component.rs:34:13 warning [control-has-associated-label] <input> element has no associated label. Form controls must have a text label.
+tests/fixtures/yew_component.rs:34:20 warning [no-autofocus] Avoid using the `autofocus` attribute on <input>. Autofocus can reduce usability and accessibility for sighted and non-sighted users.
+tests/fixtures/yew_component.rs:37:13 warning [click-events-have-key-events] <div> with click handler must also have a keyboard event handler (onkeydown, onkeyup, or onkeypress) for accessibility.
+tests/fixtures/yew_component.rs:37:13 warning [no-static-element-interactions] <div> with event handler(s) must have a `role` attribute.
+tests/fixtures/yew_component.rs:40:18 warning [no-noninteractive-tabindex] Non-interactive element <div> should not have `tabindex="5"`. Non-interactive elements should not be focusable.
+tests/fixtures/yew_component.rs:40:18 warning [tabindex-no-positive] Avoid using positive `tabindex` value (5) on <div>. This creates an unexpected tab order.
+tests/fixtures/yew_component.rs:43:19 warning [no-noninteractive-tabindex] Non-interactive element <span> should not have `tabindex="0"`. Non-interactive elements should not be focusable.
+tests/fixtures/yew_component.rs:46:16 warning [anchor-is-valid] <a> element has an invalid `href` value "#". Use a real URL, or a <button> for actions.
+tests/fixtures/yew_component.rs:49:13 error [no-distracting-elements] <marquee> elements are distracting and should not be used. They can cause accessibility issues for users with visual or cognitive disabilities.
+tests/fixtures/yew_component.rs:52:13 warning [iframe-has-title] <iframe> element is missing a `title` attribute.
+tests/fixtures/yew_component.rs:55:32 warning [img-redundant-alt] <img> alt text contains the redundant word "image". Screen readers already announce images as images.
+tests/fixtures/yew_component.rs:58:13 warning [heading-has-content] <h1> element appears to be empty. Headings must have text content for accessibility.
+tests/fixtures/yew_component.rs:61:19 error [aria-unsupported-elements] ARIA attribute `aria-label` is not supported on <meta>.
+tests/fixtures/yew_component.rs:64:17 warning [scope] The `scope` attribute should only be used on <th> elements, not <td>.
+tests/fixtures/yew_component.rs:67:13 warning [control-has-associated-label] <input> element has no associated label. Form controls must have a text label.
+tests/fixtures/yew_component.rs:70:13 warning [label-has-associated-control] <label> element has no associated form control.
+tests/fixtures/yew_component.rs:86:63 info [prefer-tag-over-role] Prefer using the <main> element instead of `role="main"`.
+tests/fixtures/yew_component.rs:94:13 warning [no-static-element-interactions] <div> with event handler(s) must have a `role` attribute.

@@ -25,7 +25,7 @@ const FRAMEWORKS: &[(&str, &str, &str)] = &[
 fn lint_snippet(code: &str) -> LintResult {
     match rsx_a11y::parser::parse_source(code, "<playground>") {
         Ok(parsed) => {
-            let diagnostics: Vec<_> = rsx_a11y::lints::run_all_lints(&parsed.elements).collect();
+            let diagnostics = rsx_a11y::lints::lint_parsed(&parsed, Rule::all());
             let errors: Vec<String> = parsed.errors.iter().map(|e| e.to_string()).collect();
             LintResult {
                 diagnostics,

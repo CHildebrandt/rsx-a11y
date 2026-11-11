@@ -5,6 +5,7 @@ members = ["playground"]
 name = "rsx-a11y"
 version = "0.1.4"
 edition = "2024"
+rust-version = "1.88"
 description = "A linting tool for checking ARIA and accessibility attributes in Rust web frameworks (Yew, Leptos, Dioxus)"
 license = "MIT"
 repository = "https://github.com/CHildebrandt/rsx-a11y"
@@ -31,6 +32,10 @@ rstml = "0.12.1"
 [[bin]]
 name = "rsx-a11y"
 path = "src/main.rs"
+required-features = ["cli"]
+
+[[test]]
+name = "cli"
 required-features = ["cli"]
 
 [profile.release]

@@ -183,6 +183,27 @@ rsx-a11y --format json src/ > report.json
 rsx-a11y --out-file report.txt src/
 ```
 
+## Ignoring Diagnostics
+
+Silence a diagnostic with a comment on the line before the element (or at the end of the same line). Name the rules to ignore and, optionally, give a reason after `--`:
+
+```rust
+html! {
+    // rsx-a11y-ignore: alt-text -- the alt text is set by the CSS sprite
+    <img src="sprite.png" />
+
+    <input autofocus /> // rsx-a11y-ignore: no-autofocus
+}
+```
+
+| Comment | Effect |
+|---------|--------|
+| `// rsx-a11y-ignore` | Ignore every rule on the next line of code |
+| `// rsx-a11y-ignore: rule-a, rule-b` | Ignore only the listed rules |
+| `// rsx-a11y-ignore-file: rule-a` | Ignore the listed rules (or all, without a list) in the whole file |
+
+A comment covers diagnostics on its target line and on any element that starts there, so attributes spread over several lines are covered too. Unknown rule names in an ignore comment are reported as errors, so a typo can't hide anything.
+
 ## How It Works
 
 1. **Walk** — Finds all `.rs` files in the target path, processing them in parallel with [rayon](https://docs.rs/rayon). Skips `target/`, `node_modules/`, and hidden directories.
