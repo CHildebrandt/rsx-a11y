@@ -162,7 +162,7 @@ fn unparseable_markup_exits_2_and_is_reported() {
     let text = stdout(&out);
     assert!(text.contains("Invalid markup in"), "{text}");
     assert!(text.contains("bad.rs:2"), "error has a line number: {text}");
-    assert!(text.contains("could not be parsed"));
+    assert!(text.contains("1 parse error in 1 file."), "{text}");
 }
 
 #[test]
