@@ -74,7 +74,10 @@ pub(super) fn is_valid_autocomplete(value: &str) -> bool {
     }
 
     // Optional shipping/billing
-    if tokens.get(idx).is_some_and(|t| SECTION_PREFIXES.contains(t)) {
+    if tokens
+        .get(idx)
+        .is_some_and(|t| SECTION_PREFIXES.contains(t))
+    {
         idx += 1;
     }
 
