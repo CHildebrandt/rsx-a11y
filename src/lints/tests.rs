@@ -4,8 +4,13 @@ use super::*;
 use crate::parser;
 
 fn lint_source(source: &str) -> Vec<LintDiagnostic> {
-    let elements = parser::parse_source(source, "test.rs").unwrap();
-    run_all_lints(&elements).collect()
+    let parsed = parser::parse_source(source, "test.rs").unwrap();
+    assert!(
+        parsed.errors.is_empty(),
+        "parse errors: {:?}",
+        parsed.errors
+    );
+    run_all_lints(&parsed.elements).collect()
 }
 
 fn has_lint(diags: &[LintDiagnostic], id: Rule) -> bool {

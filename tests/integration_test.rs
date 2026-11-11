@@ -10,8 +10,13 @@ fn lint_fixture(filename: &str) -> Vec<LintDiagnostic> {
     let path = format!("tests/fixtures/{}", filename);
     let source = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("Failed to read fixture {}: {}", path, e));
-    let elements = parser::parse_source(&source, &path).unwrap();
-    lints::run_all_lints(&elements).collect()
+    let parsed = parser::parse_source(&source, &path).unwrap();
+    assert!(
+        parsed.errors.is_empty(),
+        "parse errors: {:?}",
+        parsed.errors
+    );
+    lints::run_all_lints(&parsed.elements).collect()
 }
 
 fn count_lint(diags: &[LintDiagnostic], lint_id: Rule) -> usize {

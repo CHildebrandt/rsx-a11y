@@ -876,7 +876,8 @@ impl Role {
 /// Includes event handlers (e.g. `onclick`), global attributes (e.g. `tabindex`),
 /// and element-specific attributes (e.g. `alt`, `href`) that the linter inspects.
 /// Framework spellings are normalized when parsing: Leptos `on:click` and
-/// `attr:aria-label`, Yew `html_for`, and raw identifiers like `r#type`.
+/// `attr:aria-label`, Dioxus `aria_label`, Yew `html_for`, and raw
+/// identifiers like `r#type`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum AttributeName {
@@ -949,12 +950,17 @@ impl AttributeName {
     /// linter does not model become [`AttributeName::Unknown`].
     pub fn parse(raw: &str) -> AttributeName {
         let name = raw.strip_prefix("r#").unwrap_or(raw);
-        // Leptos: `on:click`, `attr:aria-label`.
         let normalized;
         let name = if let Some(event) = name.strip_prefix("on:") {
+            // Leptos: `on:click`.
             normalized = format!("on{event}");
             normalized.as_str()
+        } else if name.starts_with("aria_") {
+            // Dioxus: `aria_label`.
+            normalized = name.replace('_', "-");
+            normalized.as_str()
         } else {
+            // Leptos: `attr:aria-label`.
             name.strip_prefix("attr:").unwrap_or(name)
         };
         let known = match name {
@@ -1463,6 +1469,10 @@ mod tests {
         );
         assert_eq!(AttributeName::parse("r#type"), AttributeName::Type);
         assert_eq!(AttributeName::parse("html_for"), AttributeName::For);
+        assert_eq!(
+            AttributeName::parse("aria_labelledby"),
+            AttributeName::Aria(Aria::LabelledBy)
+        );
         assert_eq!(
             AttributeName::parse("aria-foo"),
             AttributeName::Unknown("aria-foo".into())

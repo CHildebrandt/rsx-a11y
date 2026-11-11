@@ -24,12 +24,18 @@ const FRAMEWORKS: &[(&str, &str, &str)] = &[
 /// Run the linter on editor code (should be a complete Rust snippet).
 fn lint_snippet(code: &str) -> LintResult {
     match rsx_a11y::parser::parse_source(code, "<playground>") {
-        Ok(elements) => {
-            let diagnostics: Vec<_> = rsx_a11y::lints::run_all_lints(&elements).collect();
+        Ok(parsed) => {
+            let diagnostics: Vec<_> = rsx_a11y::lints::run_all_lints(&parsed.elements).collect();
+            let errors: Vec<String> = parsed.errors.iter().map(|e| e.to_string()).collect();
             LintResult {
                 diagnostics,
-                elements_found: elements.len(),
-                error: None,
+                elements_found: parsed.elements.len(),
+                error: (!errors.is_empty()).then(|| {
+                    errors.join(
+                        "
+",
+                    )
+                }),
             }
         }
         Err(e) => LintResult {
