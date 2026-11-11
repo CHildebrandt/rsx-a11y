@@ -13,9 +13,10 @@
     <a href="https://docs.rs/rsx-a11y"><img src="https://docs.rs/rsx-a11y/badge.svg" alt="docs.rs"/></a>
     <a href="https://github.com/CHildebrandt/rsx-a11y/actions/workflows/build-and-test.yml"><img src="https://github.com/CHildebrandt/rsx-a11y/actions/workflows/build-and-test.yml/badge.svg" alt="build"/></a>
     <a href="https://github.com/CHildebrandt/rsx-a11y/blob/main/LICENSE"><img src="https://img.shields.io/crates/l/rsx-a11y.svg" alt="license"/></a>
+    <img src="https://img.shields.io/crates/msrv/rsx-a11y.svg" alt="minimum supported Rust version"/>
 </p>
 
-A static analysis tool that checks for ARIA and accessibility issues in Rust web framework code. Works with Rust web frameworks such as [Yew](https://yew.rs), [Leptos](https://leptos.dev) and [Dioxus](https://dioxuslabs.com) by parsing JSX-like macros `html!`, `view!`, and `rsx!` directly.
+A static analysis tool that checks for ARIA and accessibility issues in Rust web framework code. It works with [Yew](https://yew.rs), [Leptos](https://leptos.dev) and [Dioxus](https://dioxuslabs.com) by parsing the markup in `html!`, `view!` and `rsx!` macros directly — no compilation required. Use it as a CLI in CI, or as a library in your own tests.
 
 Inspired by [`eslint-plugin-jsx-a11y`](https://github.com/jsx-eslint/eslint-plugin-jsx-a11y) — the same idea, but for Rust.
 
@@ -37,20 +38,50 @@ rsx-a11y --format json src/
 
 ## Example Output
 
+For this Yew component:
+
+```rust
+html! {
+    <main>
+        <h1>{"Photos"}</h1>
+        <img src="cat.png" />
+        <button role="button">{"Save"}</button>
+        <div {onclick}>{"Show more"}</div>
+        <a href="/gallery">{"Click here"}</a>
+    </main>
+}
+```
+
+`rsx-a11y src/` reports:
+
 ```
 error: <img> element is missing an `alt` attribute. [alt-text]
-  --> src/app.rs:13:13
+  --> src/app.rs:9:13
   help: Add an `alt` attribute with descriptive text, or `alt=""` for decorative images.
+  see: https://www.w3.org/WAI/WCAG21/Understanding/non-text-content.html
 
 warning: Redundant role "button" on <button>. This is the element's implicit role. [no-redundant-roles]
-  --> src/app.rs:28:20
+  --> src/app.rs:10:21
   help: Remove the `role` attribute.
+  see: https://www.w3.org/TR/using-aria/#aria-does-nothing
 
-warning: <div> with click handler must also have a keyboard event handler. [click-events-have-key-events]
-  --> src/app.rs:37:13
+warning: <div> with click handler must also have a keyboard event handler (onkeydown, onkeyup, or onkeypress) for accessibility. [click-events-have-key-events]
+  --> src/app.rs:11:13
   help: Add an `onkeydown` or `onkeyup` handler, or use an interactive element like <button> instead.
+  see: https://www.w3.org/WAI/WCAG21/Understanding/keyboard
 
-Checked 3 files in 12ms. Found 1 error, 2 warnings, 0 infos.
+warning: <div> with event handler(s) must have a `role` attribute. [no-static-element-interactions]
+  --> src/app.rs:11:13
+  help: Add a `role` attribute that describes the element's purpose, or use a semantic element like <button> or <a>.
+  see: https://www.w3.org/WAI/WCAG21/Understanding/name-role-value
+
+warning: <a> element has ambiguous link text "Click here". Link text should describe the link's purpose. [anchor-ambiguous-text]
+  --> src/app.rs:12:13
+  help: Use text that describes where the link goes or what it does, e.g. "Read the installation guide".
+  see: https://webaim.org/techniques/hypertext/
+
+Checked 1 file in 1.77ms. Found 1 error, 4 warnings, 0 infos.
+  Some issues must be fixed for accessibility compliance.
 ```
 
 ## Supported Frameworks
@@ -273,16 +304,27 @@ trunk serve
 
 ## Development
 
-```sh
-# Run all tests
-cargo test
+Requires Rust 1.88 or newer.
 
-# Run the linter on the test fixtures
+```sh
+# Run all tests (unit, integration, CLI end-to-end and doc tests)
+cargo test -p rsx-a11y
+
+# Accept intended changes to the diagnostics snapshot
+UPDATE_SNAPSHOTS=1 cargo test -p rsx-a11y --test cli
+
+# Lint the test fixtures
 cargo run -- tests/fixtures/
 
 # List available rules
 cargo run -- --list-rules
 ```
+
+When changing a rule, add a failing example to `tests/fixtures/yew_component.rs` or `leptos_component.rs` and the correct form to `tests/fixtures/accessible_components.rs`, which must produce no diagnostics at all.
+
+CI runs rustfmt, clippy (`-D warnings`), tests on Linux, Windows and macOS, a check against the minimum supported Rust version, rustdoc, a wasm build of the playground (which is also linted with rsx-a11y itself), and `cargo package`.
+
+Releases are made by pushing a `vX.Y.Z` tag matching `Cargo.toml`; the release workflow tests, publishes to crates.io, and creates a GitHub release from the matching `CHANGELOG.md` section. See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
 
 ## References
 

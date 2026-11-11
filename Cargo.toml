@@ -3,12 +3,19 @@ members = ["playground"]
 
 [package]
 name = "rsx-a11y"
-version = "0.1.4"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
-description = "A linting tool for checking ARIA and accessibility attributes in Rust web frameworks (Yew, Leptos, Dioxus)"
+description = "Accessibility (a11y) and WAI-ARIA linter for Yew, Leptos and Dioxus markup"
 license = "MIT"
 repository = "https://github.com/CHildebrandt/rsx-a11y"
+homepage = "https://childebrandt.github.io/rsx-a11y/"
+documentation = "https://docs.rs/rsx-a11y"
+readme = "README.md"
+keywords = ["accessibility", "a11y", "aria", "lint", "wcag"]
+categories = ["accessibility", "development-tools", "command-line-utilities", "web-programming"]
+# Ship only what is needed to build, test and document the crate.
+include = ["/src", "/tests", "/README.md", "/CHANGELOG.md", "/LICENSE"]
 
 [features]
 default = ["cli"]

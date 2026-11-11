@@ -2,7 +2,15 @@ name: Deploy Playground
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
+    paths:
+      - "playground/**"
+      - "src/**"
+      - "assets/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/deploy-playground.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
