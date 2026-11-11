@@ -1,7 +1,38 @@
-use std::fmt::Display;
+//! The HTML/ARIA vocabulary the linter understands: elements ([`Tag`]),
+//! WAI-ARIA roles ([`Role`]) and properties ([`Aria`]), and attribute names
+//! ([`AttributeName`]).
+//!
+//! Names are parsed and displayed through [`std::str::FromStr`] and
+//! [`std::fmt::Display`] (e.g. `"aria-label".parse::<Aria>()`), and serialize
+//! to the same strings.
+
+use std::fmt;
+use std::str::FromStr;
+
+/// Implements `Serialize`/`Deserialize` through the type's string form so the
+/// strum attributes are the single source of truth for names.
+macro_rules! serde_via_str {
+    ($($t:ty),* $(,)?) => {$(
+        impl serde::Serialize for $t {
+            fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                s.serialize_str(&self.to_string())
+            }
+        }
+        impl<'de> serde::Deserialize<'de> for $t {
+            fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+                let s = <std::borrow::Cow<'de, str>>::deserialize(d)?;
+                s.parse().map_err(|_| {
+                    serde::de::Error::custom(format!("unknown {} `{}`", stringify!($t), s))
+                })
+            }
+        }
+    )*};
+}
+pub(crate) use serde_via_str;
 
 /// Types of values an ARIA attribute can accept.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AriaValueType {
     /// "true" or "false"
     Bool,
@@ -25,7 +56,7 @@ pub enum AriaValueType {
 
 impl AriaValueType {
     /// Check whether a static value is valid for this type.
-    pub fn is_valid(&self, value: &str) -> bool {
+    pub fn is_valid(self, value: &str) -> bool {
         match self {
             AriaValueType::Bool => matches!(value, "true" | "false"),
             AriaValueType::TristateBool => matches!(value, "true" | "false" | "mixed"),
@@ -40,7 +71,7 @@ impl AriaValueType {
     }
 
     /// Return a human-readable description of the expected values.
-    pub fn expected_description(&self) -> String {
+    pub fn expected_description(self) -> String {
         match self {
             AriaValueType::Bool => "\"true\" or \"false\"".to_string(),
             AriaValueType::TristateBool => "\"true\", \"false\", or \"mixed\"".to_string(),
@@ -71,117 +102,183 @@ impl AriaValueType {
 ///
 /// Each variant maps to a specific `aria-*` attribute as defined in the
 /// [WAI-ARIA 1.2 specification](https://www.w3.org/TR/wai-aria-1.2/#state_prop_def).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    strum::EnumString,
+    strum::Display,
+    strum::IntoStaticStr,
+    strum::EnumIter,
+)]
+#[non_exhaustive]
 pub enum Aria {
-    #[serde(rename = "aria-activedescendant")]
+    /// `aria-activedescendant`
+    #[strum(serialize = "aria-activedescendant")]
     ActiveDescendant,
-    #[serde(rename = "aria-atomic")]
+    /// `aria-atomic`
+    #[strum(serialize = "aria-atomic")]
     Atomic,
-    #[serde(rename = "aria-autocomplete")]
+    /// `aria-autocomplete`
+    #[strum(serialize = "aria-autocomplete")]
     Autocomplete,
-    #[serde(rename = "aria-braillelabel")]
+    /// `aria-braillelabel`
+    #[strum(serialize = "aria-braillelabel")]
     BrailleLabel,
-    #[serde(rename = "aria-brailleroledescription")]
+    /// `aria-brailleroledescription`
+    #[strum(serialize = "aria-brailleroledescription")]
     BrailleRoleDescription,
-    #[serde(rename = "aria-busy")]
+    /// `aria-busy`
+    #[strum(serialize = "aria-busy")]
     Busy,
-    #[serde(rename = "aria-checked")]
+    /// `aria-checked`
+    #[strum(serialize = "aria-checked")]
     Checked,
-    #[serde(rename = "aria-colcount")]
+    /// `aria-colcount`
+    #[strum(serialize = "aria-colcount")]
     ColCount,
-    #[serde(rename = "aria-colindex")]
+    /// `aria-colindex`
+    #[strum(serialize = "aria-colindex")]
     ColIndex,
-    #[serde(rename = "aria-colindextext")]
+    /// `aria-colindextext`
+    #[strum(serialize = "aria-colindextext")]
     ColIndexText,
-    #[serde(rename = "aria-colspan")]
+    /// `aria-colspan`
+    #[strum(serialize = "aria-colspan")]
     ColSpan,
-    #[serde(rename = "aria-controls")]
+    /// `aria-controls`
+    #[strum(serialize = "aria-controls")]
     Controls,
-    #[serde(rename = "aria-current")]
+    /// `aria-current`
+    #[strum(serialize = "aria-current")]
     Current,
-    #[serde(rename = "aria-describedby")]
+    /// `aria-describedby`
+    #[strum(serialize = "aria-describedby")]
     DescribedBy,
-    #[serde(rename = "aria-description")]
+    /// `aria-description`
+    #[strum(serialize = "aria-description")]
     Description,
-    #[serde(rename = "aria-details")]
+    /// `aria-details`
+    #[strum(serialize = "aria-details")]
     Details,
-    #[serde(rename = "aria-disabled")]
+    /// `aria-disabled`
+    #[strum(serialize = "aria-disabled")]
     Disabled,
-    #[serde(rename = "aria-dropeffect")]
+    /// `aria-dropeffect`
+    #[strum(serialize = "aria-dropeffect")]
     DropEffect,
-    #[serde(rename = "aria-errormessage")]
+    /// `aria-errormessage`
+    #[strum(serialize = "aria-errormessage")]
     ErrorMessage,
-    #[serde(rename = "aria-expanded")]
+    /// `aria-expanded`
+    #[strum(serialize = "aria-expanded")]
     Expanded,
-    #[serde(rename = "aria-flowto")]
+    /// `aria-flowto`
+    #[strum(serialize = "aria-flowto")]
     FlowTo,
-    #[serde(rename = "aria-grabbed")]
+    /// `aria-grabbed`
+    #[strum(serialize = "aria-grabbed")]
     Grabbed,
-    #[serde(rename = "aria-haspopup")]
+    /// `aria-haspopup`
+    #[strum(serialize = "aria-haspopup")]
     HasPopup,
-    #[serde(rename = "aria-hidden")]
+    /// `aria-hidden`
+    #[strum(serialize = "aria-hidden")]
     Hidden,
-    #[serde(rename = "aria-invalid")]
+    /// `aria-invalid`
+    #[strum(serialize = "aria-invalid")]
     Invalid,
-    #[serde(rename = "aria-keyshortcuts")]
+    /// `aria-keyshortcuts`
+    #[strum(serialize = "aria-keyshortcuts")]
     KeyShortcuts,
-    #[serde(rename = "aria-label")]
+    /// `aria-label`
+    #[strum(serialize = "aria-label")]
     Label,
-    #[serde(rename = "aria-labelledby")]
+    /// `aria-labelledby`
+    #[strum(serialize = "aria-labelledby")]
     LabelledBy,
-    #[serde(rename = "aria-level")]
+    /// `aria-level`
+    #[strum(serialize = "aria-level")]
     Level,
-    #[serde(rename = "aria-live")]
+    /// `aria-live`
+    #[strum(serialize = "aria-live")]
     Live,
-    #[serde(rename = "aria-modal")]
+    /// `aria-modal`
+    #[strum(serialize = "aria-modal")]
     Modal,
-    #[serde(rename = "aria-multiline")]
+    /// `aria-multiline`
+    #[strum(serialize = "aria-multiline")]
     Multiline,
-    #[serde(rename = "aria-multiselectable")]
+    /// `aria-multiselectable`
+    #[strum(serialize = "aria-multiselectable")]
     Multiselectable,
-    #[serde(rename = "aria-orientation")]
+    /// `aria-orientation`
+    #[strum(serialize = "aria-orientation")]
     Orientation,
-    #[serde(rename = "aria-owns")]
+    /// `aria-owns`
+    #[strum(serialize = "aria-owns")]
     Owns,
-    #[serde(rename = "aria-placeholder")]
+    /// `aria-placeholder`
+    #[strum(serialize = "aria-placeholder")]
     Placeholder,
-    #[serde(rename = "aria-posinset")]
+    /// `aria-posinset`
+    #[strum(serialize = "aria-posinset")]
     PosInSet,
-    #[serde(rename = "aria-pressed")]
+    /// `aria-pressed`
+    #[strum(serialize = "aria-pressed")]
     Pressed,
-    #[serde(rename = "aria-readonly")]
+    /// `aria-readonly`
+    #[strum(serialize = "aria-readonly")]
     ReadOnly,
-    #[serde(rename = "aria-relevant")]
+    /// `aria-relevant`
+    #[strum(serialize = "aria-relevant")]
     Relevant,
-    #[serde(rename = "aria-required")]
+    /// `aria-required`
+    #[strum(serialize = "aria-required")]
     Required,
-    #[serde(rename = "aria-roledescription")]
+    /// `aria-roledescription`
+    #[strum(serialize = "aria-roledescription")]
     RoleDescription,
-    #[serde(rename = "aria-rowcount")]
+    /// `aria-rowcount`
+    #[strum(serialize = "aria-rowcount")]
     RowCount,
-    #[serde(rename = "aria-rowindex")]
+    /// `aria-rowindex`
+    #[strum(serialize = "aria-rowindex")]
     RowIndex,
-    #[serde(rename = "aria-rowindextext")]
+    /// `aria-rowindextext`
+    #[strum(serialize = "aria-rowindextext")]
     RowIndexText,
-    #[serde(rename = "aria-rowspan")]
+    /// `aria-rowspan`
+    #[strum(serialize = "aria-rowspan")]
     RowSpan,
-    #[serde(rename = "aria-selected")]
+    /// `aria-selected`
+    #[strum(serialize = "aria-selected")]
     Selected,
-    #[serde(rename = "aria-setsize")]
+    /// `aria-setsize`
+    #[strum(serialize = "aria-setsize")]
     SetSize,
-    #[serde(rename = "aria-sort")]
+    /// `aria-sort`
+    #[strum(serialize = "aria-sort")]
     Sort,
-    #[serde(rename = "aria-valuemax")]
+    /// `aria-valuemax`
+    #[strum(serialize = "aria-valuemax")]
     ValueMax,
-    #[serde(rename = "aria-valuemin")]
+    /// `aria-valuemin`
+    #[strum(serialize = "aria-valuemin")]
     ValueMin,
-    #[serde(rename = "aria-valuenow")]
+    /// `aria-valuenow`
+    #[strum(serialize = "aria-valuenow")]
     ValueNow,
-    #[serde(rename = "aria-valuetext")]
+    /// `aria-valuetext`
+    #[strum(serialize = "aria-valuetext")]
     ValueText,
 }
 
 impl Aria {
+    /// The kind of value this property accepts.
     pub const fn value_type(&self) -> AriaValueType {
         match self {
             Aria::Autocomplete => AriaValueType::Enum(&["inline", "list", "both", "none"]),
@@ -284,7 +381,7 @@ impl Aria {
     /// Check if this ARIA property is supported by the given role.
     /// Global properties are always supported. Non-global properties
     /// are checked against role-specific support lists per WAI-ARIA 1.2.
-    pub fn is_supported_by_role(&self, role: &Role) -> bool {
+    pub fn is_supported_by_role(&self, role: Role) -> bool {
         if self.is_global() {
             return true;
         }
@@ -492,113 +589,195 @@ impl Aria {
     }
 }
 
-impl Display for Aria {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = serde_json::to_string(self).map_err(|_| std::fmt::Error::default())?;
-        write!(f, "{}", s.trim_matches('"'))
-    }
-}
-
 /// WAI-ARIA roles that can be assigned to HTML elements via the `role` attribute.
 ///
 /// Covers concrete, abstract, and landmark roles from the
 /// [WAI-ARIA 1.2 specification](https://www.w3.org/TR/wai-aria-1.2/#role_definitions).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    strum::EnumString,
+    strum::Display,
+    strum::IntoStaticStr,
+    strum::EnumIter,
+)]
+#[strum(serialize_all = "lowercase", ascii_case_insensitive)]
 #[non_exhaustive]
-#[serde(rename_all = "lowercase")]
 pub enum Role {
     // ── Concrete roles ──────────────────────────────────────────────
+    /// The `alert` role.
     Alert,
+    /// The `alertdialog` role.
     AlertDialog,
+    /// The `application` role.
     Application,
+    /// The `article` role.
     Article,
+    /// The `banner` role.
     Banner,
+    /// The `button` role.
     Button,
+    /// The `cell` role.
     Cell,
+    /// The `checkbox` role.
     Checkbox,
+    /// The `columnheader` role.
     ColumnHeader,
+    /// The `combobox` role.
     Combobox,
+    /// The `complementary` role.
     Complementary,
+    /// The `contentinfo` role.
     ContentInfo,
+    /// The `definition` role.
     Definition,
+    /// The `dialog` role.
     Dialog,
+    /// The `directory` role.
     Directory,
+    /// The `document` role.
     Document,
+    /// The `feed` role.
     Feed,
+    /// The `figure` role.
     Figure,
+    /// The `form` role.
     Form,
+    /// The `grid` role.
     Grid,
+    /// The `gridcell` role.
     GridCell,
+    /// The `group` role.
     Group,
+    /// The `heading` role.
     Heading,
+    /// The `img` role.
     Img,
+    /// The `link` role.
     Link,
+    /// The `list` role.
     List,
+    /// The `listbox` role.
     ListBox,
+    /// The `listitem` role.
     ListItem,
+    /// The `log` role.
     Log,
+    /// The `main` role.
     Main,
+    /// The `marquee` role.
     Marquee,
+    /// The `math` role.
     Math,
+    /// The `menu` role.
     Menu,
+    /// The `menubar` role.
     Menubar,
+    /// The `menuitem` role.
     MenuItem,
+    /// The `menuitemcheckbox` role.
     MenuItemCheckbox,
+    /// The `menuitemradio` role.
     MenuItemRadio,
+    /// The `meter` role.
     Meter,
+    /// The `navigation` role.
     Navigation,
+    /// The `none` role.
     None,
+    /// The `note` role.
     Note,
+    /// The `option` role.
     Option,
+    /// The `presentation` role.
     Presentation,
+    /// The `progressbar` role.
     ProgressBar,
+    /// The `radio` role.
     Radio,
+    /// The `radiogroup` role.
     RadioGroup,
+    /// The `region` role.
     Region,
+    /// The `row` role.
     Row,
+    /// The `rowgroup` role.
     RowGroup,
+    /// The `rowheader` role.
     RowHeader,
+    /// The `scrollbar` role.
     ScrollBar,
+    /// The `search` role.
     Search,
+    /// The `searchbox` role.
     SearchBox,
+    /// The `separator` role.
     Separator,
+    /// The `slider` role.
     Slider,
+    /// The `spinbutton` role.
     SpinButton,
+    /// The `status` role.
     Status,
+    /// The `switch` role.
     Switch,
+    /// The `tab` role.
     Tab,
+    /// The `table` role.
     Table,
+    /// The `tablist` role.
     TabList,
+    /// The `tabpanel` role.
     TabPanel,
+    /// The `term` role.
     Term,
+    /// The `textbox` role.
     TextBox,
+    /// The `timer` role.
     Timer,
+    /// The `toolbar` role.
     Toolbar,
+    /// The `tooltip` role.
     Tooltip,
+    /// The `tree` role.
     Tree,
+    /// The `treegrid` role.
     TreeGrid,
+    /// The `treeitem` role.
     TreeItem,
 
     // ── Abstract roles (WAI-ARIA ontology only, never valid on elements) ──
+    /// The `command` role.
     Command,
+    /// The `composite` role.
     Composite,
+    /// The `input` role.
     Input,
+    /// The `landmark` role.
     Landmark,
+    /// The `range` role.
     Range,
+    /// The `roletype` role.
     Roletype,
+    /// The `section` role.
     Section,
+    /// The `sectionhead` role.
     Sectionhead,
+    /// The `select` role.
     Select,
+    /// The `structure` role.
     Structure,
+    /// The `widget` role.
     Widget,
+    /// The `window` role.
     Window,
 }
 
 impl Role {
-    pub fn from_str(name: &str) -> Option<Role> {
-        serde_json::from_str(&format!("\"{}\"", name)).ok()
-    }
-
     /// Whether this role is an abstract WAI-ARIA role.
     /// Abstract roles exist for ontology purposes only and must never be
     /// used as a `role` attribute value on an element.
@@ -663,6 +842,7 @@ impl Role {
         }
     }
 
+    /// Whether this is a widget role that users interact with directly.
     pub fn is_interactive(&self) -> bool {
         matches!(
             self,
@@ -691,221 +871,443 @@ impl Role {
     }
 }
 
-impl Display for Role {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = serde_json::to_string(self).map_err(|_| std::fmt::Error::default())?;
-        write!(f, "{}", s.trim_matches('"'))
-    }
-}
-
 /// HTML attribute names relevant to accessibility linting.
 ///
 /// Includes event handlers (e.g. `onclick`), global attributes (e.g. `tabindex`),
 /// and element-specific attributes (e.g. `alt`, `href`) that the linter inspects.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+/// Framework spellings are normalized when parsing: Leptos `on:click` and
+/// `attr:aria-label`, Yew `html_for`, and raw identifiers like `r#type`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum AttributeName {
-    #[serde(rename = "onmouseover", alias = "on:mouseover")]
+    /// `onmouseover`
     OnMouseOver,
-    #[serde(rename = "onmouseout", alias = "on:mouseout")]
+    /// `onmouseout`
     OnMouseOut,
-    #[serde(rename = "onclick", alias = "on:click")]
+    /// `onclick`
     OnClick,
-    #[serde(rename = "onkeydown", alias = "on:keydown")]
+    /// `onkeydown`
     OnKeyDown,
-    #[serde(rename = "onkeypress", alias = "on:keypress")]
+    /// `onkeypress`
     OnKeyPress,
-    #[serde(rename = "onkeyup", alias = "on:keyup")]
+    /// `onkeyup`
     OnKeyUp,
-    #[serde(rename = "onfocus", alias = "on:focus")]
+    /// `onfocus`
     OnFocus,
-    #[serde(rename = "onblur", alias = "on:blur")]
+    /// `onblur`
     OnBlur,
-    #[serde(rename = "onchange", alias = "on:change")]
+    /// `onchange`
     OnChange,
-    #[serde(rename = "oninput", alias = "on:input")]
+    /// `oninput`
     OnInput,
-    #[serde(rename = "onsubmit", alias = "on:submit")]
+    /// `onsubmit`
     OnSubmit,
-    #[serde(rename = "accesskey")]
+    /// `accesskey`
     AccessKey,
-    #[serde(rename = "alt")]
+    /// `alt`
     Alt,
-    #[serde(rename = "autocomplete")]
+    /// `autocomplete`
     Autocomplete,
-    #[serde(rename = "autofocus")]
+    /// `autofocus`
     AutoFocus,
-    #[serde(rename = "class")]
+    /// `class`
     Class,
-    #[serde(rename = "for", alias = "html_for")]
+    /// `for`
     For,
-    #[serde(rename = "href")]
+    /// `href`
     Href,
-    #[serde(rename = "lang")]
+    /// `id`
+    Id,
+    /// `kind`
+    Kind,
+    /// `lang`
     Lang,
-    #[serde(rename = "muted")]
+    /// `muted`
     Muted,
-    #[serde(rename = "role")]
+    /// `role`
     Role,
-    #[serde(rename = "scope")]
+    /// `scope`
     Scope,
-    #[serde(rename = "src")]
+    /// `src`
     Src,
-    #[serde(rename = "tabindex")]
+    /// `tabindex`
     TabIndex,
-    #[serde(rename = "title")]
+    /// `title`
     Title,
-    #[serde(rename = "type")]
+    /// `type`
     Type,
-    #[serde(untagged)]
+    /// `value`
+    Value,
+    /// A WAI-ARIA `aria-*` attribute.
     Aria(Aria),
-    #[serde(untagged)]
-    /// Either a non-standard attribute or one not relevant to this crate.
+    /// Any other attribute (including unknown `aria-*` names), as written.
     Unknown(String),
 }
 
 impl AttributeName {
-    pub fn from_str(name: &str) -> Option<AttributeName> {
-        serde_json::from_str(&format!("\"{}\"", name)).ok()
+    /// Parse an attribute name as written in a macro. Never fails: names the
+    /// linter does not model become [`AttributeName::Unknown`].
+    pub fn parse(raw: &str) -> AttributeName {
+        let name = raw.strip_prefix("r#").unwrap_or(raw);
+        // Leptos: `on:click`, `attr:aria-label`.
+        let normalized;
+        let name = if let Some(event) = name.strip_prefix("on:") {
+            normalized = format!("on{event}");
+            normalized.as_str()
+        } else {
+            name.strip_prefix("attr:").unwrap_or(name)
+        };
+        let known = match name {
+            "onmouseover" => Some(AttributeName::OnMouseOver),
+            "onmouseout" => Some(AttributeName::OnMouseOut),
+            "onclick" => Some(AttributeName::OnClick),
+            "onkeydown" => Some(AttributeName::OnKeyDown),
+            "onkeypress" => Some(AttributeName::OnKeyPress),
+            "onkeyup" => Some(AttributeName::OnKeyUp),
+            "onfocus" => Some(AttributeName::OnFocus),
+            "onblur" => Some(AttributeName::OnBlur),
+            "onchange" => Some(AttributeName::OnChange),
+            "oninput" => Some(AttributeName::OnInput),
+            "onsubmit" => Some(AttributeName::OnSubmit),
+            "accesskey" => Some(AttributeName::AccessKey),
+            "alt" => Some(AttributeName::Alt),
+            "autocomplete" => Some(AttributeName::Autocomplete),
+            "autofocus" => Some(AttributeName::AutoFocus),
+            "class" => Some(AttributeName::Class),
+            "for" | "html_for" | "htmlFor" => Some(AttributeName::For),
+            "href" => Some(AttributeName::Href),
+            "id" => Some(AttributeName::Id),
+            "kind" => Some(AttributeName::Kind),
+            "lang" => Some(AttributeName::Lang),
+            "muted" => Some(AttributeName::Muted),
+            "role" => Some(AttributeName::Role),
+            "scope" => Some(AttributeName::Scope),
+            "src" => Some(AttributeName::Src),
+            "tabindex" => Some(AttributeName::TabIndex),
+            "title" => Some(AttributeName::Title),
+            "type" => Some(AttributeName::Type),
+            "value" => Some(AttributeName::Value),
+            _ => name.parse::<Aria>().ok().map(AttributeName::Aria),
+        };
+        known.unwrap_or_else(|| AttributeName::Unknown(raw.to_string()))
+    }
+
+    /// Whether this is a keyboard or mouse event handler (`onclick`,
+    /// `onkeydown`, …) that implies the element is interactive.
+    pub fn is_interaction_handler(&self) -> bool {
+        matches!(
+            self,
+            AttributeName::OnClick
+                | AttributeName::OnKeyDown
+                | AttributeName::OnKeyUp
+                | AttributeName::OnKeyPress
+                | AttributeName::OnMouseOver
+                | AttributeName::OnMouseOut
+        )
     }
 }
 
-impl Display for AttributeName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = serde_json::to_string(self).map_err(|_| std::fmt::Error::default())?;
-        write!(f, "{}", s.trim_matches('"'))
+impl FromStr for AttributeName {
+    type Err = std::convert::Infallible;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(AttributeName::parse(s))
     }
 }
+
+impl fmt::Display for AttributeName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            AttributeName::OnMouseOver => "onmouseover",
+            AttributeName::OnMouseOut => "onmouseout",
+            AttributeName::OnClick => "onclick",
+            AttributeName::OnKeyDown => "onkeydown",
+            AttributeName::OnKeyPress => "onkeypress",
+            AttributeName::OnKeyUp => "onkeyup",
+            AttributeName::OnFocus => "onfocus",
+            AttributeName::OnBlur => "onblur",
+            AttributeName::OnChange => "onchange",
+            AttributeName::OnInput => "oninput",
+            AttributeName::OnSubmit => "onsubmit",
+            AttributeName::AccessKey => "accesskey",
+            AttributeName::Alt => "alt",
+            AttributeName::Autocomplete => "autocomplete",
+            AttributeName::AutoFocus => "autofocus",
+            AttributeName::Class => "class",
+            AttributeName::For => "for",
+            AttributeName::Href => "href",
+            AttributeName::Id => "id",
+            AttributeName::Kind => "kind",
+            AttributeName::Lang => "lang",
+            AttributeName::Muted => "muted",
+            AttributeName::Role => "role",
+            AttributeName::Scope => "scope",
+            AttributeName::Src => "src",
+            AttributeName::TabIndex => "tabindex",
+            AttributeName::Title => "title",
+            AttributeName::Type => "type",
+            AttributeName::Value => "value",
+            AttributeName::Aria(aria) => return fmt::Display::fmt(aria, f),
+            AttributeName::Unknown(name) => name,
+        };
+        f.write_str(s)
+    }
+}
+
+serde_via_str!(Aria, Role, Tag, AttributeName);
 
 /// HTML element tag names recognised by the linter.
 ///
 /// Covers the standard HTML5 element set. Used to match parsed elements
 /// against tag-specific lint rules and implicit ARIA role mappings.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    strum::EnumString,
+    strum::Display,
+    strum::IntoStaticStr,
+    strum::EnumIter,
+)]
+#[strum(serialize_all = "lowercase")]
+#[non_exhaustive]
 pub enum Tag {
+    /// The `<a>` element.
     A,
+    /// The `<abbr>` element.
     Abbr,
+    /// The `<address>` element.
     Address,
+    /// The `<area>` element.
     Area,
+    /// The `<article>` element.
     Article,
+    /// The `<aside>` element.
     Aside,
+    /// The `<audio>` element.
     Audio,
+    /// The `<b>` element.
     B,
+    /// The `<base>` element.
     Base,
+    /// The `<bdi>` element.
     Bdi,
+    /// The `<bdo>` element.
     Bdo,
+    /// The `<blink>` element.
     Blink,
+    /// The `<blockquote>` element.
     Blockquote,
+    /// The `<body>` element.
     Body,
+    /// The `<br>` element.
     Br,
+    /// The `<button>` element.
     Button,
+    /// The `<canvas>` element.
     Canvas,
+    /// The `<caption>` element.
     Caption,
+    /// The `<cite>` element.
     Cite,
+    /// The `<code>` element.
     Code,
+    /// The `<col>` element.
     Col,
+    /// The `<colgroup>` element.
     Colgroup,
+    /// The `<data>` element.
     Data,
+    /// The `<datalist>` element.
     Datalist,
+    /// The `<dd>` element.
     Dd,
+    /// The `<del>` element.
     Del,
+    /// The `<details>` element.
     Details,
+    /// The `<dfn>` element.
     Dfn,
+    /// The `<dialog>` element.
     Dialog,
+    /// The `<div>` element.
     Div,
+    /// The `<dl>` element.
     Dl,
+    /// The `<dt>` element.
     Dt,
+    /// The `<em>` element.
     Em,
+    /// The `<embed>` element.
     Embed,
+    /// The `<fieldset>` element.
     Fieldset,
+    /// The `<figcaption>` element.
     Figcaption,
+    /// The `<figure>` element.
     Figure,
+    /// The `<footer>` element.
     Footer,
+    /// The `<form>` element.
     Form,
+    /// The `<h1>` element.
     H1,
+    /// The `<h2>` element.
     H2,
+    /// The `<h3>` element.
     H3,
+    /// The `<h4>` element.
     H4,
+    /// The `<h5>` element.
     H5,
+    /// The `<h6>` element.
     H6,
+    /// The `<head>` element.
     Head,
+    /// The `<header>` element.
     Header,
+    /// The `<hgroup>` element.
     HGroup,
+    /// The `<hr>` element.
     Hr,
+    /// The `<html>` element.
     Html,
+    /// The `<i>` element.
     I,
+    /// The `<iframe>` element.
     Iframe,
+    /// The `<img>` element.
     Img,
+    /// The `<input>` element.
     Input,
+    /// The `<ins>` element.
     Ins,
+    /// The `<kbd>` element.
     Kbd,
+    /// The `<label>` element.
     Label,
+    /// The `<legend>` element.
     Legend,
+    /// The `<li>` element.
     Li,
+    /// The `<link>` element.
     Link,
+    /// The `<main>` element.
     Main,
+    /// The `<map>` element.
     Map,
+    /// The `<mark>` element.
     Mark,
+    /// The `<marquee>` element.
     Marquee,
+    /// The `<math>` element.
     Math,
+    /// The `<menu>` element.
     Menu,
+    /// The `<meta>` element.
     Meta,
+    /// The `<meter>` element.
     Meter,
+    /// The `<nav>` element.
     Nav,
+    /// The `<noscript>` element.
     Noscript,
+    /// The `<object>` element.
     Object,
+    /// The `<ol>` element.
     Ol,
+    /// The `<optgroup>` element.
     Optgroup,
+    /// The `<option>` element.
     Option,
+    /// The `<output>` element.
     Output,
+    /// The `<p>` element.
     P,
+    /// The `<param>` element.
     Param,
+    /// The `<picture>` element.
     Picture,
+    /// The `<pre>` element.
     Pre,
+    /// The `<progress>` element.
     Progress,
+    /// The `<q>` element.
     Q,
+    /// The `<rp>` element.
     Rp,
+    /// The `<rt>` element.
     Rt,
+    /// The `<ruby>` element.
     Ruby,
+    /// The `<s>` element.
     S,
+    /// The `<samp>` element.
     Samp,
+    /// The `<script>` element.
     Script,
+    /// The `<section>` element.
     Section,
+    /// The `<select>` element.
     Select,
+    /// The `<small>` element.
     Small,
+    /// The `<source>` element.
     Source,
+    /// The `<span>` element.
     Span,
+    /// The `<strong>` element.
     Strong,
+    /// The `<style>` element.
     Style,
+    /// The `<sub>` element.
     Sub,
+    /// The `<summary>` element.
     Summary,
+    /// The `<sup>` element.
     Sup,
+    /// The `<svg>` element.
     Svg,
+    /// The `<table>` element.
     Table,
+    /// The `<tbody>` element.
     Tbody,
+    /// The `<td>` element.
     Td,
+    /// The `<template>` element.
     Template,
+    /// The `<textarea>` element.
     Textarea,
+    /// The `<tfoot>` element.
     Tfoot,
+    /// The `<th>` element.
     Th,
+    /// The `<thead>` element.
     Thead,
+    /// The `<time>` element.
     Time,
+    /// The `<title>` element.
     Title,
+    /// The `<tr>` element.
     Tr,
+    /// The `<track>` element.
     Track,
+    /// The `<u>` element.
     U,
+    /// The `<ul>` element.
     Ul,
+    /// The `<var>` element.
     Var,
+    /// The `<video>` element.
     Video,
+    /// The `<wbr>` element.
     Wbr,
 }
 
 impl Tag {
-    pub fn from_str(name: &str) -> Option<Tag> {
-        serde_json::from_str(&format!("\"{}\"", name)).ok()
-    }
-
+    /// Whether the element is natively interactive (focusable and operable).
     pub fn is_interactive(&self) -> bool {
         matches!(
             self,
@@ -919,6 +1321,7 @@ impl Tag {
         )
     }
 
+    /// Whether the element may carry ARIA roles, states and properties.
     pub fn supports_aria(&self) -> bool {
         !matches!(
             self,
@@ -926,6 +1329,7 @@ impl Tag {
         )
     }
 
+    /// Whether the element is one of `<h1>`–`<h6>`.
     pub fn is_heading(&self) -> bool {
         matches!(
             self,
@@ -965,6 +1369,7 @@ impl Tag {
         )
     }
 
+    /// The element's implicit ARIA role, if it has one.
     pub fn implicit_role(&self) -> Option<Role> {
         match self {
             Tag::A => Some(Role::Link),    // when href is present
@@ -1018,13 +1423,6 @@ impl Tag {
     }
 }
 
-impl Display for Tag {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = serde_json::to_string(self).map_err(|_| std::fmt::Error::default())?;
-        write!(f, "{}", s.trim_matches('"'))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1045,6 +1443,35 @@ mod tests {
         assert!(vtype.is_valid("false"));
         assert!(vtype.is_valid("mixed"));
         assert!(!vtype.is_valid("maybe"));
+    }
+
+    #[test]
+    fn test_names_round_trip() {
+        assert_eq!("aria-label".parse::<Aria>(), Ok(Aria::Label));
+        assert_eq!(Aria::LabelledBy.to_string(), "aria-labelledby");
+        assert_eq!("alertdialog".parse::<Role>(), Ok(Role::AlertDialog));
+        assert_eq!("Button".parse::<Role>(), Ok(Role::Button));
+        assert_eq!("hgroup".parse::<Tag>(), Ok(Tag::HGroup));
+        assert!(
+            "A".parse::<Tag>().is_err(),
+            "PascalCase components are not elements"
+        );
+        assert_eq!(AttributeName::parse("on:click"), AttributeName::OnClick);
+        assert_eq!(
+            AttributeName::parse("attr:aria-hidden"),
+            AttributeName::Aria(Aria::Hidden)
+        );
+        assert_eq!(AttributeName::parse("r#type"), AttributeName::Type);
+        assert_eq!(AttributeName::parse("html_for"), AttributeName::For);
+        assert_eq!(
+            AttributeName::parse("aria-foo"),
+            AttributeName::Unknown("aria-foo".into())
+        );
+        assert_eq!(serde_json::to_string(&Tag::Img).unwrap(), "\"img\"");
+        assert_eq!(
+            serde_json::from_str::<Role>("\"button\"").unwrap(),
+            Role::Button
+        );
     }
 
     #[test]

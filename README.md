@@ -190,7 +190,7 @@ Add it to your `Cargo.toml` with default features disabled:
 
 ```toml
 [dev-dependencies]
-rsx-a11y = { version = "*", default-features = false }
+rsx-a11y = { version = "0.2", default-features = false }
 ```
 
 Then call `check_project` and assert on the returned `LintSummary`:
@@ -198,44 +198,36 @@ Then call `check_project` and assert on the returned `LintSummary`:
 ```rust
 #[cfg(test)]
 mod accessibility_tests {
-    use std::path::Path;
     use rsx_a11y::prelude::*;
 
     #[test]
     fn no_accessibility_errors() {
-        let summary = check_project(&Path::new(env!("CARGO_MANIFEST_DIR")));
+        let summary = check_project(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))
+            .expect("source directory exists");
 
-        let errors: Vec<_> = summary.diagnostics
-            .iter()
-            .filter(|d| d.severity == Severity::Error)
-            .collect();
-
-        assert!(errors.is_empty(), "accessibility errors found: {errors:#?}");
+        // `is_clean` is false if there are error-level diagnostics *or* files
+        // that could not be parsed. `LintSummary` displays as a readable report.
+        assert!(summary.is_clean(), "accessibility issues found:
+{summary}");
     }
 }
 ```
 
-`check_project` discovers `.rs` files, parses RSX macros, runs all 36 lint rules, and returns a `LintSummary` with sorted diagnostics — no filtering is applied, so you can filter by rule, severity, or file path after the fact:
+`check_project` returns an `Err` if the path does not exist, so a typo cannot make the test pass by checking nothing. All rules run and no filtering is applied, so you can filter by rule, severity, or file afterwards — or pass `LintOptions` to `check_project_with`:
 
 ```rust
-#[cfg(test)]
-mod accessibility_tests {
-    use std::path::Path;
-    use rsx_a11y::prelude::*;
+use rsx_a11y::prelude::*;
 
-    #[test]
-    fn no_missing_alt_text() {
-        let summary = check_project(&Path::new(env!("CARGO_MANIFEST_DIR")));
-
-        let alt_issues: Vec<_> = summary.diagnostics
-            .iter()
-            .filter(|d| d.rule == Rule::AltText)
-            .collect();
-
-        assert!(alt_issues.is_empty(), "missing alt text: {alt_issues:#?}");
-    }
+#[test]
+fn no_missing_alt_text() {
+    let options = LintOptions::default().only([Rule::AltText]);
+    let summary = check_project_with(concat!(env!("CARGO_MANIFEST_DIR"), "/src"), &options).unwrap();
+    assert!(summary.diagnostics.is_empty(), "missing alt text:
+{summary}");
 }
 ```
+
+To lint a snippet, use `check_source(source, "file-name.rs")`.
 
 ## Playground
 

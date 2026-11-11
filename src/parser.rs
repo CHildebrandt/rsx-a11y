@@ -10,7 +10,7 @@ use crate::dom::{AttributeName, Role, Tag};
 use rstml::node::{Node, NodeAttribute};
 
 /// Represents an HTML element found in a macro invocation.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct HtmlElement {
     /// Element tag name (e.g., "div", "img", "button").
     pub tag: Tag,
@@ -29,59 +29,65 @@ pub struct HtmlElement {
 }
 
 impl HtmlElement {
+    /// The first attribute named `name`, if any.
+    pub fn attr(&self, name: &AttributeName) -> Option<&HtmlAttribute> {
+        self.attributes.iter().find(|a| &a.name == name)
+    }
+
+    /// Whether an attribute named `name` is present (with any value).
+    pub fn has_attr(&self, name: &AttributeName) -> bool {
+        self.attr(name).is_some()
+    }
+
+    /// Whether any of the given attributes is present.
+    pub fn has_any_attr(&self, names: &[AttributeName]) -> bool {
+        names.iter().any(|n| self.has_attr(n))
+    }
+
+    /// The static string value of attribute `name`, if present and static.
+    pub fn static_attr(&self, name: &AttributeName) -> Option<&str> {
+        self.attr(name).and_then(|a| a.value.as_static())
+    }
+
+    /// The role set with an explicit, static `role` attribute (if it parses).
+    pub fn explicit_role(&self) -> Option<Role> {
+        self.static_attr(&AttributeName::Role)
+            .and_then(|v| v.trim().parse().ok())
+    }
+
     /// The effective role: explicit `role` attribute takes precedence,
     /// falling back to the tag's implicit role.
     pub fn role(&self) -> Option<Role> {
-        self.attributes
-            .iter()
-            .find_map(|attr| {
-                if attr.name == AttributeName::Role {
-                    attr.value
-                        .as_ref()
-                        .and_then(|v| v.as_static())
-                        .and_then(Role::from_str)
-                } else {
-                    None
-                }
-            })
-            .or_else(|| self.tag.implicit_role())
+        self.explicit_role().or_else(|| self.tag.implicit_role())
     }
 
     /// Whether the element is focusable (natively interactive or has tabindex >= 0).
     pub fn is_focusable(&self) -> bool {
         self.tag.is_interactive()
-            || self.attributes.iter().any(|a| {
-                a.name == AttributeName::TabIndex
-                    && match &a.value {
-                        Some(AttrValue::Static(v)) => v.parse::<i32>().map_or(false, |i| i >= 0),
-                        _ => true, // dynamic value; assume possibly focusable
-                    }
-            })
+            || self
+                .attr(&AttributeName::TabIndex)
+                .is_some_and(|a| match &a.value {
+                    AttrValue::Static(v) => v.trim().parse::<i32>().is_ok_and(|i| i >= 0),
+                    // Dynamic value: assume it may be focusable.
+                    AttrValue::Dynamic | AttrValue::Bare => true,
+                })
     }
 
-    /// Whether there is an explicit event handler on this element.
+    /// Whether there is a mouse or keyboard event handler on this element.
     pub fn has_event_handler(&self) -> bool {
-        self.attributes.iter().any(|a| {
-            matches!(
-                a.name,
-                AttributeName::OnClick
-                    | AttributeName::OnKeyDown
-                    | AttributeName::OnKeyUp
-                    | AttributeName::OnKeyPress
-                    | AttributeName::OnMouseOver
-                    | AttributeName::OnMouseOut
-            )
-        })
+        self.attributes
+            .iter()
+            .any(|a| a.name.is_interaction_handler())
     }
 }
 
 /// Represents an attribute on an HTML element.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct HtmlAttribute {
     /// Attribute name (e.g., "aria-label", "class", "role").
     pub name: AttributeName,
-    /// Attribute value, if present.
-    pub value: Option<AttrValue>,
+    /// Attribute value.
+    pub value: AttrValue,
     /// Line number in the source file (1-based).
     pub line: usize,
     /// Column number in the source file (1-based).
@@ -89,12 +95,15 @@ pub struct HtmlAttribute {
 }
 
 /// Represents the value of an HTML attribute.
-#[derive(Debug, Clone, serde::Serialize, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[non_exhaustive]
 pub enum AttrValue {
     /// A static string literal value (contents without quotes).
     Static(String),
     /// A dynamic expression (e.g., `{some_variable}`) — cannot be checked statically.
     Dynamic,
+    /// No value at all, as in a boolean attribute: `<input autofocus />`.
+    Bare,
 }
 
 impl AttrValue {
@@ -102,8 +111,13 @@ impl AttrValue {
     pub fn as_static(&self) -> Option<&str> {
         match self {
             AttrValue::Static(s) => Some(s),
-            AttrValue::Dynamic => None,
+            AttrValue::Dynamic | AttrValue::Bare => None,
         }
+    }
+
+    /// Whether the value is the static string `expected`.
+    pub fn is(&self, expected: &str) -> bool {
+        self.as_static() == Some(expected)
     }
 }
 
@@ -224,7 +238,7 @@ fn collect_elements_from_nodes(acc: &mut Vec<HtmlElement>, nodes: &[Node], file_
     for node in nodes {
         match node {
             Node::Element(node_element) => {
-                if let Some(tag) = Tag::from_str(&node_element.name().to_string()) {
+                if let Ok(tag) = node_element.name().to_string().parse::<Tag>() {
                     let line_column = node_element.name().span().start();
                     let element = HtmlElement {
                         tag,
@@ -237,16 +251,16 @@ fn collect_elements_from_nodes(acc: &mut Vec<HtmlElement>, nodes: &[Node], file_
                             })
                             .map(|keyed_attribute| {
                                 let line_column = keyed_attribute.key.span().start();
-                                let attr_key = keyed_attribute.key.to_string();
+                                let value = if keyed_attribute.value().is_none() {
+                                    AttrValue::Bare
+                                } else {
+                                    keyed_attribute
+                                        .value_literal_string()
+                                        .map_or(AttrValue::Dynamic, AttrValue::Static)
+                                };
                                 HtmlAttribute {
-                                    name: AttributeName::from_str(&attr_key)
-                                        .unwrap_or(AttributeName::Unknown(attr_key)),
-                                    value: Some(
-                                        keyed_attribute
-                                            .value_literal_string()
-                                            .map(AttrValue::Static)
-                                            .unwrap_or(AttrValue::Dynamic),
-                                    ),
+                                    name: AttributeName::parse(&keyed_attribute.key.to_string()),
+                                    value,
                                     line: line_column.line,
                                     column: line_column.column + 1,
                                 }
@@ -376,7 +390,7 @@ mod tests {
             .iter()
             .find(|a| a.name == AttributeName::Aria(Aria::Hidden))
             .unwrap();
-        assert!(matches!(attr.value, Some(AttrValue::Dynamic)));
+        assert_eq!(attr.value, AttrValue::Dynamic);
     }
 
     #[test]
@@ -459,7 +473,7 @@ mod tests {
             .find(|a| a.name == AttributeName::Aria(Aria::Current))
             .unwrap();
         assert!(
-            matches!(attr.value, Some(AttrValue::Dynamic)),
+            attr.value == AttrValue::Dynamic,
             "expected Dynamic, got {:?}",
             attr.value
         );
@@ -485,7 +499,7 @@ mod tests {
             .find(|a| a.name == AttributeName::Class)
             .unwrap();
         assert!(
-            matches!(attr.value, Some(AttrValue::Dynamic)),
+            attr.value == AttrValue::Dynamic,
             "expected Dynamic, got {:?}",
             attr.value
         );
