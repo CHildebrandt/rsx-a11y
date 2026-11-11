@@ -12,7 +12,7 @@ use syn::parse::{ParseStream, Parser};
 use syn::spanned::Spanned;
 use syn::{Expr, Ident, LitStr, Token, braced, token};
 
-use super::markup::{MElement, MNode, position};
+use super::markup::{MElement, MNode, literal_value, position};
 use super::{AttrValue, HtmlAttribute};
 use crate::dom::AttributeName;
 
@@ -217,15 +217,11 @@ fn text_node(text: &str) -> MNode {
 fn attribute(key: &str, span: proc_macro2::Span, value: &Expr) -> HtmlAttribute {
     let (line, column) = position(span.start());
     let value = match value {
-        Expr::Lit(lit) => match &lit.lit {
-            syn::Lit::Str(s) if is_interpolated(&s.value()) => AttrValue::Dynamic,
-            syn::Lit::Str(s) => AttrValue::Static(s.value()),
-            syn::Lit::Int(i) => AttrValue::Static(i.base10_digits().to_string()),
-            syn::Lit::Float(f) => AttrValue::Static(f.base10_digits().to_string()),
-            syn::Lit::Bool(b) => AttrValue::Static(b.value.to_string()),
-            _ => AttrValue::Dynamic,
-        },
-        _ => AttrValue::Dynamic,
+        Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(s),
+            ..
+        }) if is_interpolated(&s.value()) => AttrValue::Dynamic,
+        _ => literal_value(value).map_or(AttrValue::Dynamic, AttrValue::Static),
     };
     HtmlAttribute {
         name: AttributeName::parse(key),

@@ -7,7 +7,7 @@ use std::io::{self, Write};
 use std::time::Duration;
 
 use crate::lints::{LintDiagnostic, Severity};
-use crate::parser::ParseError;
+use crate::parser::{ParseError, ParseErrorKind};
 
 /// Output format for diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,8 +80,18 @@ pub struct JsonSummary {
     /// Diagnostic counts per severity.
     #[serde(flatten)]
     pub counts: SeverityCounts,
-    /// Number of files that could not be read or parsed.
+    /// Number of parse errors (a file can have several, one per macro).
     pub parse_errors: usize,
+    /// Number of distinct files with at least one parse error.
+    pub files_with_parse_errors: usize,
+}
+
+/// Number of distinct files among `errors`.
+fn distinct_files(errors: &[ParseError]) -> usize {
+    let mut files: Vec<&str> = errors.iter().map(|e| e.file.as_str()).collect();
+    files.sort_unstable();
+    files.dedup();
+    files.len()
 }
 
 /// Write a full report (diagnostics, parse errors and summary) to `w`.
@@ -109,6 +119,7 @@ fn write_json(report: &Report<'_>, w: &mut dyn Write) -> io::Result<()> {
             files_checked: report.files_checked,
             counts: SeverityCounts::from_diagnostics(report.diagnostics),
             parse_errors: report.parse_errors.len(),
+            files_with_parse_errors: distinct_files(report.parse_errors),
         },
     };
     serde_json::to_writer_pretty(&mut *w, &json)?;
@@ -162,11 +173,13 @@ fn write_pretty(report: &Report<'_>, color: bool, w: &mut dyn Write) -> io::Resu
             p.paint(":", Style::Bold),
             err
         )?;
-        writeln!(
-            w,
-            "  {} this file was not linted.",
-            p.paint("note:", Style::Help)
-        )?;
+        let note = match err.kind {
+            ParseErrorKind::Io | ParseErrorKind::Rust => "this file was not linted.",
+            ParseErrorKind::Markup => {
+                "this macro was not linted (or only partly); other macros in the file were."
+            }
+        };
+        writeln!(w, "  {} {}", p.paint("note:", Style::Help), note)?;
         writeln!(w)?;
     }
 
@@ -186,10 +199,13 @@ fn write_pretty(report: &Report<'_>, color: bool, w: &mut dyn Write) -> io::Resu
     );
     let n_parse = report.parse_errors.len();
     if n_parse > 0 {
+        let n_files = distinct_files(report.parse_errors);
         summary.push_str(&format!(
-            " {} file{} could not be parsed.",
+            " {} parse error{} in {} file{}.",
             n_parse,
-            plural(n_parse)
+            plural(n_parse),
+            n_files,
+            plural(n_files)
         ));
     }
     writeln!(w, "{}", p.paint(&summary, Style::Bold))?;
@@ -258,7 +274,6 @@ mod tests {
     use super::*;
     use crate::dom::Tag;
     use crate::lints::Rule;
-    use crate::parser::ParseErrorKind;
 
     fn diag(severity: Severity) -> LintDiagnostic {
         LintDiagnostic {
@@ -294,8 +309,23 @@ mod tests {
         assert!(out.contains("--> a.rs:3:5"), "{out}");
         assert!(out.contains("help: do x"), "{out}");
         assert!(out.contains("Failed to parse b.rs: boom"), "{out}");
-        assert!(out.contains("1 file could not be parsed"), "{out}");
+        assert!(out.contains("1 parse error in 1 file."), "{out}");
         assert!(!out.contains('\u{1b}'), "no ANSI codes when color is off");
+    }
+
+    #[test]
+    fn several_errors_in_one_file_count_once() {
+        let d = [diag(Severity::Error)];
+        let e = [
+            ParseError::new(ParseErrorKind::Markup, "b.rs", "one"),
+            ParseError::new(ParseErrorKind::Markup, "b.rs", "two"),
+        ];
+        let mut out = Vec::new();
+        write_report(&report(&d, &e), OutputFormat::Pretty, false, &mut out).unwrap();
+        let out = String::from_utf8(out).unwrap();
+        assert!(out.contains("2 parse errors in 1 file."), "{out}");
+        assert!(out.contains("this macro was not linted"), "{out}");
+        assert!(!out.contains("this file was not linted"), "{out}");
     }
 
     #[test]
@@ -310,6 +340,7 @@ mod tests {
         assert_eq!(v["summary"]["errors"], 1);
         assert_eq!(v["summary"]["warnings"], 1);
         assert_eq!(v["summary"]["parse_errors"], 1);
+        assert_eq!(v["summary"]["files_with_parse_errors"], 1);
         assert_eq!(v["summary"]["files_scanned"], 2);
     }
 }

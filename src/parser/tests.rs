@@ -454,3 +454,31 @@ fn test_qualified_markup_macro_is_parsed() {
     let elements = parse_test(r#"fn c() { leptos::view! { <img src="x.png" /> } }"#);
     assert_eq!(tags(&elements), [Tag::Img]);
 }
+
+// --- Review regressions (#10) ---
+
+#[test]
+fn test_negative_numeric_literals_are_static() {
+    let dioxus = parse_test(r#"fn A() -> Element { rsx! { div { tabindex: -1 } } }"#);
+    assert_eq!(dioxus[0].static_attr(&AttributeName::TabIndex), Some("-1"));
+    let leptos = parse_test(r#"fn c() { view! { <div tabindex=-1></div> } }"#);
+    assert_eq!(leptos[0].static_attr(&AttributeName::TabIndex), Some("-1"));
+}
+
+#[test]
+fn test_errors_inside_markup_blocks_are_reported() {
+    let parsed = parse_source(
+        r#"fn c() { html! { <div> if show { <img></span> } </div> } }"#,
+        "t.rs",
+    )
+    .unwrap();
+    assert!(!parsed.errors.is_empty(), "malformed markup in an if-block");
+}
+
+#[test]
+fn test_yew_root_if_is_parsed() {
+    let elements = parse_test(
+        r#"fn c() { html! { if show { <img src="x.png" /> } else { <p>{"none"}</p> } } }"#,
+    );
+    assert_eq!(tags(&elements), [Tag::Img, Tag::P]);
+}

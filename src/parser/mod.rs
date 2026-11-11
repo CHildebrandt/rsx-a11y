@@ -274,7 +274,9 @@ impl<'ast> Visit<'ast> for MacroVisitor<'_> {
 fn process_macro(name: &str, tokens: TokenStream, file: &str, out: &mut ParsedSource) {
     if MARKUP_MACROS.contains(&name) {
         let body = strip_leading_context(tokens.clone());
-        let parsed = if starts_with_lt(&body) {
+        // Yew also allows a root-level `if cond { <p/> }` in html!.
+        let yew_root_if = matches!(name, "html" | "html_nested") && starts_with_ident(&body, "if");
+        let parsed = if starts_with_lt(&body) || yew_root_if {
             Some(jsx::parse(body))
         } else if name == "rsx" && !body.is_empty() {
             Some(dioxus::parse(body))
@@ -310,6 +312,10 @@ fn strip_leading_context(tokens: TokenStream) -> TokenStream {
 
 fn is_lt(tt: &TokenTree) -> bool {
     matches!(tt, TokenTree::Punct(p) if p.as_char() == '<')
+}
+
+fn starts_with_ident(tokens: &TokenStream, word: &str) -> bool {
+    matches!(tokens.clone().into_iter().next(), Some(TokenTree::Ident(i)) if i == word)
 }
 
 fn starts_with_lt(tokens: &TokenStream) -> bool {
