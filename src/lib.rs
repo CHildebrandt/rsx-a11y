@@ -253,8 +253,8 @@ fn sort_diagnostics(diagnostics: &mut [LintDiagnostic]) {
 ///
 /// If `path` is a file, it is returned when it has an `.rs` extension.
 /// `target/`, `node_modules/` and dot-directories below `path` are skipped,
-/// and symbolic links to directories are not followed (so results always
-/// live under `path`).
+/// and symbolic links (to files or directories) are not followed, so results
+/// always live under `path`.
 ///
 /// # Errors
 ///
@@ -288,9 +288,9 @@ fn collect_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
                 continue;
             }
             collect_recursive(&path, out)?;
-        } else if path.extension().is_some_and(|ext| ext == "rs")
-            && (file_type.is_file() || (file_type.is_symlink() && path.is_file()))
-        {
+        } else if file_type.is_file() && path.extension().is_some_and(|ext| ext == "rs") {
+            // Symlinked files are skipped like symlinked directories: their
+            // target may live outside the scanned tree.
             out.push(path);
         }
     }
@@ -319,6 +319,22 @@ mod tests {
     fn check_project_errors_on_missing_path() {
         let err = check_project("definitely/not/a/real/path").unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinks_outside_the_root_are_not_collected() {
+        let base = std::env::temp_dir().join(format!("rsx-a11y-symlink-{}", std::process::id()));
+        let root = base.join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(base.join("outside.rs"), "fn x() {}").unwrap();
+        std::fs::write(root.join("inside.rs"), "fn y() {}").unwrap();
+        std::os::unix::fs::symlink(base.join("outside.rs"), root.join("linked.rs")).unwrap();
+        std::os::unix::fs::symlink(&base, root.join("linked_dir")).unwrap();
+
+        let files = collect_rust_files(&root).unwrap();
+        let _ = std::fs::remove_dir_all(&base);
+        assert_eq!(files, [root.join("inside.rs")]);
     }
 
     #[test]
