@@ -447,3 +447,17 @@ fn test_jsx_style_rsx_still_uses_jsx_parser() {
     let elements = parse_test(r#"fn c() { rsx! { <img src="x.png" /> } }"#);
     assert_eq!(tags(&elements), [Tag::Img]);
 }
+
+#[test]
+fn test_yew_shorthand_attribute_and_leptos_spread() {
+    let elements = parse_test(r#"fn c() { html! { <div {onclick} {..rest}></div> } }"#);
+    let div = &elements[0];
+    assert!(
+        div.has_attr(&AttributeName::OnClick),
+        "{:?}",
+        div.attributes
+    );
+    assert!(div.has_spread_attributes);
+    let plain = parse_test(r#"fn c() { html! { <div {onclick}></div> } }"#);
+    assert!(!plain[0].has_spread_attributes);
+}

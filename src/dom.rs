@@ -42,6 +42,8 @@ pub enum AriaValueType {
     BoolOrUndefined,
     /// One of a fixed set of string values
     Enum(&'static [&'static str]),
+    /// A space-separated list of distinct tokens from a fixed set
+    TokenList(&'static [&'static str]),
     /// An integer number
     Integer,
     /// A floating-point number
@@ -64,6 +66,12 @@ impl AriaValueType {
                 matches!(value, "true" | "false" | "undefined")
             }
             AriaValueType::Enum(variants) => variants.contains(&value),
+            AriaValueType::TokenList(tokens) => {
+                let used: Vec<&str> = value.split_whitespace().collect();
+                !used.is_empty()
+                    && used.iter().all(|t| tokens.contains(t))
+                    && used.iter().enumerate().all(|(i, t)| !used[..i].contains(t))
+            }
             AriaValueType::Integer => value.parse::<i64>().is_ok(),
             AriaValueType::Number => value.parse::<f64>().is_ok(),
             AriaValueType::IdRef | AriaValueType::IdRefList | AriaValueType::FreeText => true,
@@ -87,6 +95,14 @@ impl AriaValueType {
                 }
                 out
             }
+            AriaValueType::TokenList(tokens) => format!(
+                "a space-separated list of: {}",
+                tokens
+                    .iter()
+                    .map(|t| format!("\"{t}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             AriaValueType::Integer => "an integer".to_string(),
             AriaValueType::Number => "a number".to_string(),
             AriaValueType::IdRef => "an element ID reference".to_string(),
@@ -301,9 +317,7 @@ impl Aria {
             Aria::Orientation => AriaValueType::Enum(&["horizontal", "vertical", "undefined"]),
             Aria::Pressed => AriaValueType::TristateBool,
             Aria::ReadOnly => AriaValueType::Bool,
-            Aria::Relevant => {
-                AriaValueType::Enum(&["additions", "additions text", "all", "removals", "text"])
-            }
+            Aria::Relevant => AriaValueType::TokenList(&["additions", "all", "removals", "text"]),
             Aria::Required => AriaValueType::Bool,
             Aria::Selected => AriaValueType::BoolOrUndefined,
             Aria::Sort => AriaValueType::Enum(&["ascending", "descending", "none", "other"]),
@@ -342,7 +356,7 @@ impl Aria {
             Aria::ColIndexText => AriaValueType::FreeText,
             Aria::RowIndexText => AriaValueType::FreeText,
             Aria::DropEffect => {
-                AriaValueType::Enum(&["copy", "execute", "link", "move", "none", "popup"])
+                AriaValueType::TokenList(&["copy", "execute", "link", "move", "none", "popup"])
             }
         }
     }
@@ -750,6 +764,32 @@ pub enum Role {
     /// The `treeitem` role.
     TreeItem,
 
+    // ── Document-structure roles added in WAI-ARIA 1.2 ──────────────
+    /// The `blockquote` role.
+    Blockquote,
+    /// The `caption` role.
+    Caption,
+    /// The `code` role.
+    Code,
+    /// The `deletion` role.
+    Deletion,
+    /// The `emphasis` role.
+    Emphasis,
+    /// The `generic` role.
+    Generic,
+    /// The `insertion` role.
+    Insertion,
+    /// The `paragraph` role.
+    Paragraph,
+    /// The `strong` role.
+    Strong,
+    /// The `subscript` role.
+    Subscript,
+    /// The `superscript` role.
+    Superscript,
+    /// The `time` role.
+    Time,
+
     // ── Abstract roles (WAI-ARIA ontology only, never valid on elements) ──
     /// The `command` role.
     Command,
@@ -800,12 +840,16 @@ impl Role {
     }
 
     /// Required ARIA properties for this role per WAI-ARIA 1.2.
+    ///
+    /// A focusable `separator` additionally requires `aria-valuenow`; that
+    /// depends on the element and is checked by the lint rule.
     pub fn required_aria_props(&self) -> &'static [Aria] {
         match self {
             Role::Checkbox => &[Aria::Checked],
             Role::Combobox => &[Aria::Controls, Aria::Expanded],
             Role::Heading => &[Aria::Level],
-            Role::Meter => &[Aria::ValueNow, Aria::ValueMax, Aria::ValueMin],
+            Role::Meter => &[Aria::ValueNow],
+            Role::Option => &[Aria::Selected],
             Role::MenuItemCheckbox => &[Aria::Checked],
             Role::MenuItemRadio => &[Aria::Checked],
             Role::Radio => &[Aria::Checked],
@@ -939,6 +983,14 @@ pub enum AttributeName {
     Type,
     /// `value`
     Value,
+    /// `disabled`
+    Disabled,
+    /// `list`
+    List,
+    /// `multiple`
+    Multiple,
+    /// `size`
+    Size,
     /// A WAI-ARIA `aria-*` attribute.
     Aria(Aria),
     /// Any other attribute (including unknown `aria-*` names), as written.
@@ -993,6 +1045,10 @@ impl AttributeName {
             "title" => Some(AttributeName::Title),
             "type" => Some(AttributeName::Type),
             "value" => Some(AttributeName::Value),
+            "disabled" => Some(AttributeName::Disabled),
+            "list" => Some(AttributeName::List),
+            "multiple" => Some(AttributeName::Multiple),
+            "size" => Some(AttributeName::Size),
             _ => name.parse::<Aria>().ok().map(AttributeName::Aria),
         };
         known.unwrap_or_else(|| AttributeName::Unknown(raw.to_string()))
@@ -1052,6 +1108,10 @@ impl fmt::Display for AttributeName {
             AttributeName::Title => "title",
             AttributeName::Type => "type",
             AttributeName::Value => "value",
+            AttributeName::Disabled => "disabled",
+            AttributeName::List => "list",
+            AttributeName::Multiple => "multiple",
+            AttributeName::Size => "size",
             AttributeName::Aria(aria) => return fmt::Display::fmt(aria, f),
             AttributeName::Unknown(name) => name,
         };
@@ -1254,6 +1314,8 @@ pub enum Tag {
     Samp,
     /// The `<script>` element.
     Script,
+    /// The `<search>` element.
+    Search,
     /// The `<section>` element.
     Section,
     /// The `<select>` element.
@@ -1424,10 +1486,72 @@ impl Tag {
             Tag::Thead => Some(Role::RowGroup),
             Tag::Tr => Some(Role::Row),
             Tag::Ul => Some(Role::List),
+            Tag::Blockquote => Some(Role::Blockquote),
+            Tag::Caption => Some(Role::Caption),
+            Tag::Code => Some(Role::Code),
+            Tag::Del | Tag::S => Some(Role::Deletion),
+            Tag::Em => Some(Role::Emphasis),
+            Tag::Ins => Some(Role::Insertion),
+            Tag::P => Some(Role::Paragraph),
+            Tag::Search => Some(Role::Search),
+            Tag::Strong => Some(Role::Strong),
+            Tag::Sub => Some(Role::Subscript),
+            Tag::Sup => Some(Role::Superscript),
+            Tag::Time => Some(Role::Time),
             _ => None,
         }
     }
 }
+
+/// Roles from the [DPUB-ARIA](https://www.w3.org/TR/dpub-aria-1.1/) and
+/// [Graphics ARIA](https://www.w3.org/TR/graphics-aria-1.0/) modules. They
+/// are valid `role` values but have no special handling in this crate.
+pub const MODULE_ROLES: &[&str] = &[
+    "doc-abstract",
+    "doc-acknowledgments",
+    "doc-afterword",
+    "doc-appendix",
+    "doc-backlink",
+    "doc-biblioentry",
+    "doc-bibliography",
+    "doc-biblioref",
+    "doc-chapter",
+    "doc-colophon",
+    "doc-conclusion",
+    "doc-cover",
+    "doc-credit",
+    "doc-credits",
+    "doc-dedication",
+    "doc-endnote",
+    "doc-endnotes",
+    "doc-epigraph",
+    "doc-epilogue",
+    "doc-errata",
+    "doc-example",
+    "doc-footnote",
+    "doc-foreword",
+    "doc-glossary",
+    "doc-glossref",
+    "doc-index",
+    "doc-introduction",
+    "doc-noteref",
+    "doc-notice",
+    "doc-pagebreak",
+    "doc-pagefooter",
+    "doc-pageheader",
+    "doc-pagelist",
+    "doc-part",
+    "doc-preface",
+    "doc-prologue",
+    "doc-pullquote",
+    "doc-qna",
+    "doc-subtitle",
+    "doc-tip",
+    "doc-toc",
+    "graphics-document",
+    "graphics-object",
+    "graphics-symbol",
+];
 
 #[cfg(test)]
 mod tests {
@@ -1440,6 +1564,24 @@ mod tests {
         assert!(vtype.is_valid("false"));
         assert!(!vtype.is_valid("yes"));
         assert!(!vtype.is_valid("1"));
+    }
+
+    #[test]
+    fn test_token_list_validation() {
+        let vtype = Aria::Relevant.value_type();
+        assert!(vtype.is_valid("additions text"));
+        assert!(vtype.is_valid("text removals"));
+        assert!(!vtype.is_valid("additions additions"));
+        assert!(!vtype.is_valid("everything"));
+        assert!(!vtype.is_valid(""));
+    }
+
+    #[test]
+    fn test_aria_1_2_roles_parse() {
+        for name in ["generic", "paragraph", "blockquote", "time", "superscript"] {
+            assert!(name.parse::<Role>().is_ok(), "{name}");
+        }
+        assert_eq!(Role::Meter.required_aria_props(), &[Aria::ValueNow]);
     }
 
     #[test]

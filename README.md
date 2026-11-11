@@ -76,9 +76,9 @@ An `html!` or `view!` macro that doesn't start with `<` (for example maud's `htm
 | `alt-text` | Elements that require alt text (`<img>`, `<area>`, `<input type="image">`, `<object>`) must have it |
 | `aria-props` | Unknown `aria-*` attribute (e.g. `aria-foo`) |
 | `aria-proptypes` | Invalid value for a known ARIA attribute (e.g. `aria-hidden="yes"`) |
-| `aria-role` | Unknown or abstract WAI-ARIA role (e.g. `role="banana"`, `role="widget"`) |
+| `aria-role` | Unknown or abstract WAI-ARIA role (e.g. `role="banana"`, `role="widget"`). WAI-ARIA 1.2, DPUB-ARIA and Graphics-ARIA roles are accepted |
 | `aria-unsupported-elements` | ARIA attributes on elements that don't support them (`<meta>`, `<script>`, etc.) |
-| `autocomplete-valid` | Invalid `autocomplete` attribute value |
+| `autocomplete-valid` | Invalid `autocomplete` value, checked against the full HTML autofill grammar (`section-*`, `shipping`/`billing`, `home`/`work`/…, `webauthn`) |
 | `lang` | Invalid BCP 47 language tag |
 | `no-aria-hidden-on-focusable` | `aria-hidden="true"` on a focusable element |
 | `no-distracting-elements` | `<marquee>` or `<blink>` elements |
@@ -88,25 +88,25 @@ An `html!` or `view!` macro that doesn't start with `<` (for example maud's `htm
 
 | Rule | Description |
 |------|-------------|
-| `anchor-ambiguous-text` | `<a>` text must not be generic ("click here", "here", "link", "learn more") |
+| `anchor-ambiguous-text` | Link text (content or `aria-label`) must not be generic ("click here", "here", "link", "learn more") |
 | `anchor-has-content` | `<a>` without discernible text content |
-| `anchor-is-valid` | `<a>` with `href="#"`, empty `href`, or `javascript:void(0)` |
+| `anchor-is-valid` | `<a>` with `href="#"`, an empty or `javascript:` `href`, or an `onclick` but no `href` |
 | `aria-activedescendant-has-tabindex` | Non-interactive element with `aria-activedescendant` needs `tabindex` |
 | `click-events-have-key-events` | Click handler without corresponding keyboard handler on non-interactive element |
-| `control-has-associated-label` | Interactive controls must have a text label |
+| `control-has-associated-label` | Form controls need a label: a wrapping `<label>`, a `<label for>` matching their `id`, or `aria-label`/`aria-labelledby`/`title` |
 | `heading-has-content` | Empty heading elements (`<h1>` through `<h6>`) |
 | `html-has-lang` | `<html>` element without `lang` attribute |
 | `iframe-has-title` | `<iframe>` without `title` attribute |
 | `img-redundant-alt` | `<img>` alt text containing words like "image", "picture", "photo" |
 | `interactive-supports-focus` | Element with interactive role and event handler must be focusable |
-| `label-has-associated-control` | `<label>` without an associated form control |
-| `media-has-caption` | `<video>` or `<audio>` without captions |
+| `label-has-associated-control` | `<label>` needs text and an associated control (`for`, or a nested control) |
+| `media-has-caption` | `<video>` or `<audio>` without a `<track kind="captions">` child |
 | `mouse-events-have-key-events` | `onmouseover`/`onmouseout` without `onfocus`/`onblur` |
 | `no-access-key` | `accesskey` attribute (conflicts with screen readers) |
 | `no-autofocus` | `autofocus` attribute (reduces usability) |
 | `no-interactive-element-to-noninteractive-role` | Interactive element assigned a non-interactive role |
 | `no-noninteractive-element-interactions` | Non-interactive element with event handlers |
-| `no-noninteractive-element-to-interactive-role` | Non-interactive element assigned an interactive role |
+| `no-noninteractive-element-to-interactive-role` | Semantic non-interactive element (e.g. `<h2>`, `<li>`) assigned an interactive role; common widget patterns like `<li role="tab">` are allowed |
 | `no-noninteractive-tabindex` | `tabindex` on non-interactive elements |
 | `no-redundant-roles` | Explicit role matches the element's implicit role |
 | `no-static-element-interactions` | Static element (`<div>`, `<span>`) with event handlers but no role |
@@ -190,7 +190,9 @@ rsx-a11y --out-file report.txt src/
 3. **Lint** — Runs all enabled lint rules against each extracted element. Each rule provides a severity, description, and help text with WCAG references.
 4. **Report** — Outputs diagnostics sorted by file, line, and column. Supports colored terminal output and JSON.
 
-Dynamic attribute values (e.g. `aria-hidden={is_hidden}`) are detected but skipped for value validation, since they can't be checked statically.
+Dynamic attribute values (e.g. `aria-hidden={is_hidden}`) are detected but skipped for value validation, since they can't be checked statically. Rules that report a *missing* attribute are skipped for elements with spread attributes (`{..attrs}`), and rules that need to see content (link text, caption tracks) are skipped when that content is dynamic.
+
+Input roles follow the `type` attribute (`<input type="checkbox">` is a checkbox, `type="range"` a slider), `<a>` is only a link when it has an `href`, and `<img alt="">` is presentational.
 
 ## Library / Testing API
 

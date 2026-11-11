@@ -37,10 +37,25 @@ pub struct HtmlElement {
     pub tag: Tag,
     /// Attributes on the element.
     pub attributes: Vec<HtmlAttribute>,
+    /// Whether the element has spread attributes (`{..attrs}` in Leptos,
+    /// `..attrs` in Dioxus), so it may have attributes that are not listed.
+    pub has_spread_attributes: bool,
     /// Whether the element is self-closing (e.g., `<img />`).
     pub is_self_closing: bool,
-    /// Whether the element has child content (text or nested elements).
+    /// Whether the element has child content (non-blank text, elements,
+    /// components or expressions).
     pub has_children: bool,
+    /// The static text content of the element and its descendants (including
+    /// the `alt` text of descendant images), whitespace-normalized.
+    pub text: String,
+    /// Whether any descendant content is only known at runtime (expressions,
+    /// interpolated strings, or components), so `text` may be incomplete.
+    pub has_dynamic_content: bool,
+    /// This element's position in the file's element list.
+    pub index: usize,
+    /// The [`index`](Self::index) of the nearest enclosing HTML element in
+    /// the same macro, if any.
+    pub parent: Option<usize>,
     /// Line number in the source file (1-based).
     pub line: usize,
     /// Column number in the source file (1-based).
@@ -65,33 +80,124 @@ impl HtmlElement {
         names.iter().any(|n| self.has_attr(n))
     }
 
+    /// Whether the attribute is present, or might be supplied by spread
+    /// attributes. Use this before reporting an attribute as *missing*.
+    pub fn may_have_attr(&self, name: &AttributeName) -> bool {
+        self.has_spread_attributes || self.has_attr(name)
+    }
+
+    /// Whether any of the given attributes is present or might be spread in.
+    pub fn may_have_any_attr(&self, names: &[AttributeName]) -> bool {
+        self.has_spread_attributes || self.has_any_attr(names)
+    }
+
     /// The static string value of attribute `name`, if present and static.
     pub fn static_attr(&self, name: &AttributeName) -> Option<&str> {
         self.attr(name).and_then(|a| a.value.as_static())
     }
 
-    /// The role set with an explicit, static `role` attribute (if it parses).
+    /// The lowercased static `type` attribute of an `<input>`, `"text"` if it
+    /// is absent, or `None` if it is dynamic.
+    pub fn input_type(&self) -> Option<String> {
+        match self.attr(&AttributeName::Type) {
+            None => Some("text".to_string()),
+            Some(a) => a.value.as_static().map(|t| t.trim().to_ascii_lowercase()),
+        }
+    }
+
+    /// Whether the element's `aria-hidden` is the static value `"true"`.
+    pub fn is_aria_hidden(&self) -> bool {
+        self.attr(&AttributeName::Aria(crate::dom::Aria::Hidden))
+            .is_some_and(|a| a.value.is("true"))
+    }
+
+    /// The role set with an explicit, static `role` attribute: the first
+    /// token that is a valid, non-abstract role (later tokens are fallbacks).
     pub fn explicit_role(&self) -> Option<Role> {
-        self.static_attr(&AttributeName::Role)
-            .and_then(|v| v.trim().parse().ok())
+        self.static_attr(&AttributeName::Role)?
+            .split_whitespace()
+            .filter_map(|token| token.parse::<Role>().ok())
+            .find(|role| !role.is_abstract())
     }
 
-    /// The effective role: explicit `role` attribute takes precedence,
-    /// falling back to the tag's implicit role.
+    /// The element's implicit role, taking its attributes into account
+    /// (`<input type="checkbox">` is a checkbox, `<a>` without `href` has no
+    /// role, `<img alt="">` is presentational, …).
+    pub fn implicit_role(&self) -> Option<Role> {
+        let has = |name: AttributeName| self.has_attr(&name);
+        match self.tag {
+            Tag::A | Tag::Area => has(AttributeName::Href).then_some(Role::Link),
+            Tag::Img => {
+                if self.static_attr(&AttributeName::Alt) == Some("") {
+                    Some(Role::Presentation)
+                } else {
+                    Some(Role::Img)
+                }
+            }
+            Tag::Input => match self.input_type()?.as_str() {
+                "checkbox" => Some(Role::Checkbox),
+                "radio" => Some(Role::Radio),
+                "range" => Some(Role::Slider),
+                "number" => Some(Role::SpinButton),
+                "button" | "submit" | "reset" | "image" => Some(Role::Button),
+                "search" if !has(AttributeName::List) => Some(Role::SearchBox),
+                "text" | "email" | "tel" | "url" | "search" if has(AttributeName::List) => {
+                    Some(Role::Combobox)
+                }
+                "text" | "email" | "tel" | "url" => Some(Role::TextBox),
+                // hidden, password, file, color, date, … have no ARIA role.
+                _ => None,
+            },
+            Tag::Select => {
+                let size_gt_1 = self
+                    .static_attr(&AttributeName::Size)
+                    .and_then(|s| s.trim().parse::<u32>().ok())
+                    .is_some_and(|s| s > 1);
+                if has(AttributeName::Multiple) || size_gt_1 {
+                    Some(Role::ListBox)
+                } else {
+                    Some(Role::Combobox)
+                }
+            }
+            Tag::Section => self
+                .has_any_attr(&[
+                    AttributeName::Aria(crate::dom::Aria::Label),
+                    AttributeName::Aria(crate::dom::Aria::LabelledBy),
+                    AttributeName::Title,
+                ])
+                .then_some(Role::Region),
+            tag => tag.implicit_role(),
+        }
+    }
+
+    /// The effective role: an explicit `role` attribute takes precedence,
+    /// falling back to the implicit role.
     pub fn role(&self) -> Option<Role> {
-        self.explicit_role().or_else(|| self.tag.implicit_role())
+        self.explicit_role().or_else(|| self.implicit_role())
     }
 
-    /// Whether the element is focusable (natively interactive or has tabindex >= 0).
+    /// Whether the element is natively interactive, considering attributes
+    /// (`<a>` needs an `href`, `<input type="hidden">` is not interactive).
+    pub fn is_natively_interactive(&self) -> bool {
+        match self.tag {
+            Tag::A | Tag::Area => self.has_attr(&AttributeName::Href),
+            Tag::Input => self.input_type().is_none_or(|t| t != "hidden"),
+            Tag::Audio | Tag::Video => self.has_attr(&AttributeName::Unknown("controls".into())),
+            tag => tag.is_interactive(),
+        }
+    }
+
+    /// Whether the element can receive keyboard focus: an explicit
+    /// `tabindex >= 0`, or natively interactive and not disabled.
     pub fn is_focusable(&self) -> bool {
-        self.tag.is_interactive()
-            || self
-                .attr(&AttributeName::TabIndex)
-                .is_some_and(|a| match &a.value {
-                    AttrValue::Static(v) => v.trim().parse::<i32>().is_ok_and(|i| i >= 0),
-                    // Dynamic value: assume it may be focusable.
-                    AttrValue::Dynamic | AttrValue::Bare => true,
-                })
+        if let Some(tabindex) = self.attr(&AttributeName::TabIndex) {
+            return match &tabindex.value {
+                AttrValue::Static(v) => v.trim().parse::<i32>().is_ok_and(|i| i >= 0),
+                // Dynamic value: assume it may be focusable.
+                AttrValue::Dynamic | AttrValue::Bare => true,
+            };
+        }
+        self.is_natively_interactive() && !self.has_attr(&AttributeName::Disabled)
     }
 
     /// Whether there is a mouse or keyboard event handler on this element.

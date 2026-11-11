@@ -1,14 +1,17 @@
 //! Implementations of the individual lint rules.
 //!
 //! Each rule is a function that inspects one element and reports zero or more
-//! diagnostics through the [`Emitter`].
+//! diagnostics through the [`Emitter`]. Rules that report a *missing*
+//! attribute use [`HtmlElement::may_have_attr`] so that elements with spread
+//! attributes (`{..attrs}`) are not flagged.
 
 use super::values::{is_valid_autocomplete, is_valid_lang};
 use super::{Emitter, Rule};
-use crate::dom::{Aria, AttributeName as A, Role, Tag};
+use crate::dom::{Aria, AttributeName as A, MODULE_ROLES, Role, Tag};
 use crate::parser::{HtmlAttribute, HtmlElement};
 
 const LABEL_ATTRS: [A; 2] = [A::Aria(Aria::Label), A::Aria(Aria::LabelledBy)];
+const NAME_ATTRS: [A; 3] = [A::Aria(Aria::Label), A::Aria(Aria::LabelledBy), A::Title];
 
 /// Dispatch to the implementation of `rule`.
 pub(super) fn check(rule: Rule, el: &HtmlElement, cx: &mut Emitter<'_>) {
@@ -67,26 +70,40 @@ fn static_attrs<'a>(
         .filter_map(|a| a.value.as_static().map(|v| (a, v)))
 }
 
-/// The explicit `role` attribute together with its parsed role, if valid.
-fn role_attr(el: &HtmlElement) -> Option<(&HtmlAttribute, &str, Role)> {
-    static_attrs(el, &A::Role)
-        .next()
-        .and_then(|(a, v)| v.trim().parse().ok().map(|r| (a, v, r)))
+/// The explicit `role` attribute together with the role it resolves to.
+fn role_attr(el: &HtmlElement) -> Option<(&HtmlAttribute, Role)> {
+    let attr = el.attr(&A::Role)?;
+    el.explicit_role().map(|role| (attr, role))
+}
+
+/// Whether `el` is hidden from assistive technology or explicitly
+/// presentational, which exempts it from interaction rules.
+fn is_hidden_or_presentational(el: &HtmlElement) -> bool {
+    el.is_aria_hidden() || matches!(el.explicit_role(), Some(Role::Presentation | Role::None))
+}
+
+/// Lowercase, drop punctuation and collapse whitespace.
+fn normalize_text(text: &str) -> String {
+    text.chars()
+        .filter(|c| !matches!(c, '.' | ',' | '?' | '¿' | '!' | '‽' | '¡' | ';' | ':'))
+        .collect::<String>()
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn alt_text(el: &HtmlElement, cx: &mut Emitter<'_>) {
-    let has_alt = el.has_attr(&A::Alt);
-    let has_label = el.has_any_attr(&LABEL_ATTRS);
+    let has_alt = el.may_have_attr(&A::Alt);
+    let has_label = el.may_have_any_attr(&LABEL_ATTRS);
     match el.tag {
         Tag::Img => {
-            let presentational = el
-                .static_attr(&A::Role)
-                .is_some_and(|v| matches!(v.trim(), "presentation" | "none"));
+            let presentational =
+                matches!(el.explicit_role(), Some(Role::Presentation | Role::None));
             if !has_alt && !presentational {
                 cx.on_element(
                     "<img> element is missing an `alt` attribute.",
-                    "Add an `alt` attribute with descriptive text, or `alt=\"\"` for decorative images, \
-                     or `role=\"presentation\"` / `role=\"none\"`.",
+                    "Add an `alt` attribute with descriptive text, or `alt=\"\"` for decorative images.",
                 );
             }
         }
@@ -94,15 +111,12 @@ fn alt_text(el: &HtmlElement, cx: &mut Emitter<'_>) {
             "<area> element is missing an `alt` attribute.",
             "Add an `alt` attribute or `aria-label` / `aria-labelledby`.",
         ),
-        Tag::Input
-            if el.attr(&A::Type).is_some_and(|a| a.value.is("image")) && !has_alt && !has_label =>
-        {
-            cx.on_element(
+        Tag::Input if el.input_type().as_deref() == Some("image") && !has_alt && !has_label => cx
+            .on_element(
                 "<input type=\"image\"> is missing an `alt` attribute.",
                 "Add an `alt` attribute or `aria-label` / `aria-labelledby`.",
-            )
-        }
-        Tag::Object if !el.has_attr(&A::Title) && !has_label && !el.has_children => cx.on_element(
+            ),
+        Tag::Object if !el.may_have_any_attr(&NAME_ATTRS) && !el.has_children => cx.on_element(
             "<object> element is missing alternative text.",
             "Add a `title` attribute, `aria-label` / `aria-labelledby`, or text content.",
         ),
@@ -115,28 +129,35 @@ fn anchor_ambiguous_text(el: &HtmlElement, cx: &mut Emitter<'_>) {
         return;
     }
     const AMBIGUOUS: &[&str] = &["click here", "here", "link", "a link", "learn more"];
-    for attr in &el.attributes {
-        if attr.name != A::Aria(Aria::Label) && attr.name != A::Title {
-            continue;
-        }
-        if let Some(val) = attr.value.as_static()
-            && AMBIGUOUS.contains(&val.trim().to_lowercase().as_str())
-        {
-            cx.on_attr(
-                attr,
-                format!(
-                    "<a> element has ambiguous link text \"{val}\". Link text should be descriptive of the link's purpose."
-                ),
-                "Use text that describes the purpose of the link, such as where the link goes or what it does.",
-            );
-        }
+    // The accessible name: `aria-label` wins over content. `aria-labelledby`
+    // and dynamic content cannot be resolved statically.
+    let (name, attr) = match el.attr(&A::Aria(Aria::Label)) {
+        Some(attr) => match attr.value.as_static() {
+            Some(label) => (label.to_string(), Some(attr)),
+            None => return,
+        },
+        None if el.has_attr(&A::Aria(Aria::LabelledBy)) || el.has_dynamic_content => return,
+        None => (el.text.clone(), None),
+    };
+    if !AMBIGUOUS.contains(&normalize_text(&name).as_str()) {
+        return;
+    }
+    let message = format!(
+        "<a> element has ambiguous link text \"{}\". Link text should describe the link's purpose.",
+        name.trim()
+    );
+    let help = "Use text that describes where the link goes or what it does, e.g. \"Read the installation guide\".";
+    match attr {
+        Some(attr) => cx.on_attr(attr, message, help),
+        None => cx.on_element(message, help),
     }
 }
 
 fn anchor_has_content(el: &HtmlElement, cx: &mut Emitter<'_>) {
     if el.tag == Tag::A
         && !el.has_children
-        && !el.has_any_attr(&[A::Aria(Aria::Label), A::Aria(Aria::LabelledBy), A::Title])
+        && !el.may_have_any_attr(&NAME_ATTRS)
+        && !el.is_aria_hidden()
     {
         cx.on_element(
             "<a> element is missing content. Links must have discernible text.",
@@ -150,22 +171,29 @@ fn anchor_is_valid(el: &HtmlElement, cx: &mut Emitter<'_>) {
         return;
     }
     for (attr, val) in static_attrs(el, &A::Href) {
-        if val == "#" || val.is_empty() || val == "javascript:void(0)" {
+        let href = val.trim().to_ascii_lowercase();
+        if href.is_empty() || href == "#" || href.starts_with("javascript:") {
             cx.on_attr(
                 attr,
                 format!(
-                    "<a> element has an invalid `href` value \"{val}\". Use a real URL or use a <button> for actions."
+                    "<a> element has an invalid `href` value \"{val}\". Use a real URL, or a <button> for actions."
                 ),
                 "Use a meaningful `href`, or use a <button> element instead.",
             );
         }
     }
+    if !el.may_have_attr(&A::Href) && el.has_attr(&A::OnClick) {
+        cx.on_element(
+            "<a> element without an `href` is used as a button.",
+            "Use a <button> for actions, or give the link an `href` it navigates to.",
+        );
+    }
 }
 
 fn aria_activedescendant_has_tabindex(el: &HtmlElement, cx: &mut Emitter<'_>) {
-    if !el.tag.is_interactive()
+    if !el.is_natively_interactive()
         && el.has_attr(&A::Aria(Aria::ActiveDescendant))
-        && !el.has_attr(&A::TabIndex)
+        && !el.may_have_attr(&A::TabIndex)
     {
         cx.on_element(
             format!(
@@ -196,7 +224,7 @@ fn aria_proptypes(el: &HtmlElement, cx: &mut Emitter<'_>) {
         let A::Aria(aria) = &attr.name else { continue };
         let vtype = aria.value_type();
         if let Some(val) = attr.value.as_static()
-            && !vtype.is_valid(val)
+            && !vtype.is_valid(val.trim())
         {
             cx.on_attr(
                 attr,
@@ -225,6 +253,7 @@ fn aria_role(el: &HtmlElement, cx: &mut Emitter<'_>) {
                     "Use a non-abstract role instead. See https://www.w3.org/TR/wai-aria-1.2/#abstract_roles",
                 ),
                 Ok(_) => {}
+                Err(_) if MODULE_ROLES.contains(&token.to_ascii_lowercase().as_str()) => {}
                 Err(_) => cx.on_attr(
                     attr,
                     format!("Invalid ARIA role \"{token}\" on <{}>.", el.tag),
@@ -257,7 +286,7 @@ fn aria_unsupported_elements(el: &HtmlElement, cx: &mut Emitter<'_>) {
 }
 
 fn autocomplete_valid(el: &HtmlElement, cx: &mut Emitter<'_>) {
-    if !matches!(el.tag, Tag::Input | Tag::Select | Tag::Textarea) {
+    if !matches!(el.tag, Tag::Input | Tag::Select | Tag::Textarea | Tag::Form) {
         return;
     }
     for (attr, val) in static_attrs(el, &A::Autocomplete) {
@@ -265,7 +294,7 @@ fn autocomplete_valid(el: &HtmlElement, cx: &mut Emitter<'_>) {
             cx.on_attr(
                 attr,
                 format!("Invalid `autocomplete` value \"{val}\" on <{}>.", el.tag),
-                "Use a valid autocomplete value such as \"name\", \"email\", \"username\", \"current-password\", \"street-address\", \"off\", etc.",
+                "Use a valid autocomplete token such as \"name\", \"email\", \"work tel\", \"shipping postal-code\", \"current-password\" or \"off\".",
             );
         }
     }
@@ -275,7 +304,8 @@ fn click_events_have_key_events(el: &HtmlElement, cx: &mut Emitter<'_>) {
     // Interactive elements inherently handle keyboard events. An interactive
     // *role* (e.g. role="button") does not add keyboard behaviour, so it does
     // not exempt the element.
-    if el.tag.is_interactive() || !el.has_attr(&A::OnClick) {
+    if el.is_natively_interactive() || is_hidden_or_presentational(el) || !el.has_attr(&A::OnClick)
+    {
         return;
     }
     if !el.has_any_attr(&[A::OnKeyDown, A::OnKeyUp, A::OnKeyPress]) {
@@ -290,32 +320,41 @@ fn click_events_have_key_events(el: &HtmlElement, cx: &mut Emitter<'_>) {
 }
 
 fn control_has_associated_label(el: &HtmlElement, cx: &mut Emitter<'_>) {
-    let is_control = matches!(
-        el.tag,
-        Tag::Button
-            | Tag::Input
-            | Tag::Select
-            | Tag::Textarea
-            | Tag::Meter
-            | Tag::Output
-            | Tag::Progress
-    );
-    if is_control
-        && !el.has_children
-        && !el.has_any_attr(&[A::Aria(Aria::Label), A::Aria(Aria::LabelledBy), A::Title])
-    {
+    match el.tag {
+        Tag::Input => {
+            let Some(kind) = el.input_type() else { return };
+            match kind.as_str() {
+                // Not rendered, or labelled by the browser's default text.
+                "hidden" | "submit" | "reset" => return,
+                // Covered by the alt-text rule.
+                "image" => return,
+                "button" if el.may_have_attr(&A::Value) => return,
+                _ => {}
+            }
+        }
+        Tag::Button => {
+            if el.has_children {
+                return;
+            }
+        }
+        Tag::Select | Tag::Textarea | Tag::Meter | Tag::Output | Tag::Progress => {}
+        _ => return,
+    }
+    let inside_label = cx.doc.ancestors(el).any(|a| a.tag == Tag::Label);
+    let labelled = el.may_have_any_attr(&NAME_ATTRS) || inside_label || cx.doc.is_label_target(el);
+    if !labelled && !el.is_aria_hidden() {
         cx.on_element(
             format!(
-                "<{}> element has no associated label. Interactive controls must have a text label.",
+                "<{}> element has no associated label. Form controls must have a text label.",
                 el.tag
             ),
-            "Add an `aria-label`, `aria-labelledby`, or `title` attribute, or use a <label>.",
+            "Wrap it in a <label>, point a <label for=\"…\"> at its `id`, or add an `aria-label` / `aria-labelledby`.",
         );
     }
 }
 
 fn heading_has_content(el: &HtmlElement, cx: &mut Emitter<'_>) {
-    if el.tag.is_heading() && !el.has_children && !el.has_any_attr(&LABEL_ATTRS) {
+    if el.tag.is_heading() && !el.has_children && !el.may_have_any_attr(&LABEL_ATTRS) {
         cx.on_element(
             format!(
                 "<{}> element appears to be empty. Headings must have text content for accessibility.",
@@ -327,7 +366,7 @@ fn heading_has_content(el: &HtmlElement, cx: &mut Emitter<'_>) {
 }
 
 fn html_has_lang(el: &HtmlElement, cx: &mut Emitter<'_>) {
-    if el.tag == Tag::Html && !el.has_attr(&A::Lang) {
+    if el.tag == Tag::Html && !el.may_have_attr(&A::Lang) {
         cx.on_element(
             "<html> element is missing a `lang` attribute.",
             "Add a `lang` attribute (e.g., `lang=\"en\"`) to help screen readers determine the correct pronunciation.",
@@ -336,13 +375,7 @@ fn html_has_lang(el: &HtmlElement, cx: &mut Emitter<'_>) {
 }
 
 fn iframe_has_title(el: &HtmlElement, cx: &mut Emitter<'_>) {
-    if el.tag != Tag::Iframe {
-        return;
-    }
-    let hidden = el
-        .attr(&A::Aria(Aria::Hidden))
-        .is_some_and(|a| a.value.is("true"));
-    if !el.has_attr(&A::Title) && !el.has_any_attr(&LABEL_ATTRS) && !hidden {
+    if el.tag == Tag::Iframe && !el.may_have_any_attr(&NAME_ATTRS) && !el.is_aria_hidden() {
         cx.on_element(
             "<iframe> element is missing a `title` attribute.",
             "Add a `title` attribute that describes the iframe content.",
@@ -351,13 +384,16 @@ fn iframe_has_title(el: &HtmlElement, cx: &mut Emitter<'_>) {
 }
 
 fn img_redundant_alt(el: &HtmlElement, cx: &mut Emitter<'_>) {
-    if el.tag != Tag::Img {
+    if el.tag != Tag::Img || el.is_aria_hidden() {
         return;
     }
-    const REDUNDANT: &[&str] = &["image", "picture", "photo", "icon", "graphic"];
+    const REDUNDANT: &[&str] = &["image", "picture", "photo"];
     for (attr, val) in static_attrs(el, &A::Alt) {
         let lower = val.to_lowercase();
-        if let Some(word) = REDUNDANT.iter().find(|w| lower.contains(*w)) {
+        let word = lower
+            .split(|c: char| !c.is_alphanumeric())
+            .find(|w| REDUNDANT.contains(w));
+        if let Some(word) = word {
             cx.on_attr(
                 attr,
                 format!(
@@ -370,10 +406,10 @@ fn img_redundant_alt(el: &HtmlElement, cx: &mut Emitter<'_>) {
 }
 
 fn interactive_supports_focus(el: &HtmlElement, cx: &mut Emitter<'_>) {
-    if el.tag.is_interactive() {
+    if el.is_natively_interactive() || el.is_aria_hidden() {
         return;
     }
-    let interactive_role = role_attr(el).is_some_and(|(_, _, r)| r.is_interactive());
+    let interactive_role = el.explicit_role().is_some_and(|r| r.is_interactive());
     if interactive_role && el.has_event_handler() && !el.is_focusable() {
         cx.on_element(
             format!(
@@ -386,12 +422,36 @@ fn interactive_supports_focus(el: &HtmlElement, cx: &mut Emitter<'_>) {
 }
 
 fn label_has_associated_control(el: &HtmlElement, cx: &mut Emitter<'_>) {
-    // A label with children might wrap a form control, which cannot be
-    // verified here, so only warn when there is no `for` and no children.
-    if el.tag == Tag::Label && !el.has_attr(&A::For) && !el.has_children {
+    if el.tag != Tag::Label {
+        return;
+    }
+    const CONTROLS: &[Tag] = &[
+        Tag::Input,
+        Tag::Meter,
+        Tag::Output,
+        Tag::Progress,
+        Tag::Select,
+        Tag::Textarea,
+    ];
+    let has_control = el.may_have_attr(&A::For)
+        || el.has_dynamic_content
+        || cx
+            .doc
+            .descendants(el)
+            .iter()
+            .any(|d| CONTROLS.contains(&d.tag));
+    let has_text =
+        !el.text.is_empty() || el.has_dynamic_content || el.may_have_any_attr(&LABEL_ATTRS);
+
+    if !has_control {
         cx.on_element(
             "<label> element has no associated form control.",
-            "Add a `for` attribute linking to a form control's `id`, or nest a form control inside the label.",
+            "Add a `for` attribute matching a form control's `id`, or nest the control inside the label.",
+        );
+    } else if !has_text {
+        cx.on_element(
+            "<label> element has no text.",
+            "Add text that describes the associated form control.",
         );
     }
 }
@@ -409,19 +469,29 @@ fn lang(el: &HtmlElement, cx: &mut Emitter<'_>) {
 }
 
 fn media_has_caption(el: &HtmlElement, cx: &mut Emitter<'_>) {
-    if !matches!(el.tag, Tag::Video | Tag::Audio) {
+    if !matches!(el.tag, Tag::Video | Tag::Audio) || el.is_aria_hidden() {
         return;
     }
-    let exempt = el.has_any_attr(&[
-        A::Aria(Aria::Label),
-        A::Aria(Aria::LabelledBy),
-        A::Muted,
-        A::Aria(Aria::Hidden),
-    ]);
-    if !exempt {
+    // Muted video has no audio to caption.
+    if el.tag == Tag::Video && el.has_attr(&A::Muted) {
+        return;
+    }
+    // Tracks rendered dynamically cannot be checked.
+    if el.has_dynamic_content || el.has_spread_attributes {
+        return;
+    }
+    let has_captions = cx.doc.children(el).iter().any(|child| {
+        child.tag == Tag::Track
+            && child.attr(&A::Kind).is_some_and(|k| {
+                k.value
+                    .as_static()
+                    .is_none_or(|v| v.trim().eq_ignore_ascii_case("captions"))
+            })
+    });
+    if !has_captions {
         cx.on_element(
-            format!("<{}> elements must have captions for accessibility.", el.tag),
-            "Add a <track kind=\"captions\"> child element, or use `aria-label` / `aria-labelledby` for descriptive text.",
+            format!("<{}> element must have captions.", el.tag),
+            "Add a <track kind=\"captions\" src=\"…\"> child element.",
         );
     }
 }
@@ -474,13 +544,15 @@ fn no_aria_hidden_on_focusable(el: &HtmlElement, cx: &mut Emitter<'_>) {
                 "<{}> element is focusable but has `aria-hidden=\"true\"`, which hides it from assistive technologies.",
                 el.tag
             ),
-            "Remove `aria-hidden=\"true\"` from focusable elements, or make the element non-focusable.",
+            "Remove `aria-hidden=\"true\"`, or make the element non-focusable (e.g. `tabindex=\"-1\"`).",
         );
     }
 }
 
 fn no_autofocus(el: &HtmlElement, cx: &mut Emitter<'_>) {
-    if let Some(attr) = el.attr(&A::AutoFocus) {
+    if let Some(attr) = el.attr(&A::AutoFocus)
+        && !attr.value.is("false")
+    {
         cx.on_attr(
             attr,
             format!(
@@ -505,16 +577,16 @@ fn no_distracting_elements(el: &HtmlElement, cx: &mut Emitter<'_>) {
 }
 
 fn no_interactive_element_to_noninteractive_role(el: &HtmlElement, cx: &mut Emitter<'_>) {
-    if !el.tag.is_interactive() {
+    if !el.is_natively_interactive() {
         return;
     }
-    if let Some((attr, val, role)) = role_attr(el)
+    if let Some((attr, role)) = role_attr(el)
         && !role.is_interactive()
     {
         cx.on_attr(
             attr,
             format!(
-                "Interactive element <{}> should not be assigned the non-interactive role \"{val}\".",
+                "Interactive element <{}> should not be assigned the non-interactive role \"{role}\".",
                 el.tag
             ),
             "Remove the `role` attribute or use an appropriate interactive role.",
@@ -525,41 +597,91 @@ fn no_interactive_element_to_noninteractive_role(el: &HtmlElement, cx: &mut Emit
 fn no_noninteractive_element_interactions(el: &HtmlElement, cx: &mut Emitter<'_>) {
     // Elements without an implicit role are handled by
     // no-static-element-interactions instead.
-    if el.tag.is_interactive() || el.tag.implicit_role().is_none() {
+    if el.is_natively_interactive() || is_hidden_or_presentational(el) {
         return;
     }
-    if el.explicit_role().is_some_and(|r| r.is_interactive()) {
+    let Some(implicit) = el.implicit_role() else {
+        return;
+    };
+    if implicit.is_interactive() || el.explicit_role().is_some_and(|r| r.is_interactive()) {
         return;
     }
     let has_handler = el.has_any_attr(&[A::OnClick, A::OnKeyDown, A::OnKeyUp, A::OnKeyPress]);
     if has_handler {
         cx.on_element(
-            format!("Non-interactive element <{}> should not have event handlers.", el.tag),
+            format!(
+                "Non-interactive element <{}> should not have event handlers.",
+                el.tag
+            ),
             "Use an interactive element like <button> or <a>, or add an appropriate `role` attribute.",
         );
     }
 }
 
+/// Interactive roles that are conventionally allowed on non-interactive
+/// semantic elements (the defaults of eslint-plugin-jsx-a11y).
+fn allowed_interactive_role(tag: Tag, role: Role) -> bool {
+    match tag {
+        Tag::Ul | Tag::Ol => matches!(
+            role,
+            Role::ListBox
+                | Role::Menu
+                | Role::Menubar
+                | Role::RadioGroup
+                | Role::TabList
+                | Role::Tree
+                | Role::TreeGrid
+        ),
+        Tag::Li => matches!(
+            role,
+            Role::MenuItem
+                | Role::MenuItemRadio
+                | Role::MenuItemCheckbox
+                | Role::Option
+                | Role::Row
+                | Role::Tab
+                | Role::TreeItem
+        ),
+        Tag::Table => role == Role::Grid,
+        Tag::Td => role == Role::GridCell,
+        Tag::Fieldset => role == Role::RadioGroup,
+        _ => false,
+    }
+}
+
 fn no_noninteractive_element_to_interactive_role(el: &HtmlElement, cx: &mut Emitter<'_>) {
-    if el.tag.is_interactive() {
+    // Only semantic, non-interactive elements: static elements like <div>
+    // and <span> may take an interactive role (see interactive-supports-focus
+    // and click-events-have-key-events for what they then need).
+    let Some(implicit) = el.implicit_role() else {
+        return;
+    };
+    if el.is_natively_interactive() || implicit.is_interactive() {
         return;
     }
-    if let Some((attr, val, role)) = role_attr(el)
+    if let Some((attr, role)) = role_attr(el)
         && role.is_interactive()
+        && !allowed_interactive_role(el.tag, role)
     {
         cx.on_attr(
             attr,
             format!(
-                "Non-interactive element <{}> should not be assigned the interactive role \"{val}\".",
+                "Non-interactive element <{}> should not be assigned the interactive role \"{role}\".",
                 el.tag
             ),
-            "Use the appropriate interactive element instead, e.g., <button>, <a>, <input>.",
+            "Use an element with the right semantics instead, e.g. <button>, <a> or <input>, or a <div>/<span> with the role.",
         );
     }
 }
 
 fn no_noninteractive_tabindex(el: &HtmlElement, cx: &mut Emitter<'_>) {
-    if el.role().is_some_and(|r| r.is_interactive()) {
+    if el
+        .role()
+        .is_some_and(|r| r.is_interactive() || r == Role::TabPanel)
+    {
+        return;
+    }
+    if el.is_natively_interactive() {
         return;
     }
     for (attr, val) in static_attrs(el, &A::TabIndex) {
@@ -579,14 +701,14 @@ fn no_noninteractive_tabindex(el: &HtmlElement, cx: &mut Emitter<'_>) {
 }
 
 fn no_redundant_roles(el: &HtmlElement, cx: &mut Emitter<'_>) {
-    if let Some(implicit) = el.tag.implicit_role()
-        && let Some((attr, val, role)) = role_attr(el)
+    if let Some(implicit) = el.implicit_role()
+        && let Some((attr, role)) = role_attr(el)
         && role == implicit
     {
         cx.on_attr(
             attr,
             format!(
-                "Redundant role \"{val}\" on <{}>. This is the element's implicit role.",
+                "Redundant role \"{role}\" on <{}>. This is the element's implicit role.",
                 el.tag
             ),
             "Remove the `role` attribute.",
@@ -595,29 +717,36 @@ fn no_redundant_roles(el: &HtmlElement, cx: &mut Emitter<'_>) {
 }
 
 fn no_static_element_interactions(el: &HtmlElement, cx: &mut Emitter<'_>) {
-    if el.tag.is_interactive() || el.tag.implicit_role().is_some() || el.has_attr(&A::Role) {
+    if el.is_natively_interactive()
+        || el.implicit_role().is_some()
+        || el.may_have_attr(&A::Role)
+        || el.is_aria_hidden()
+    {
         return;
     }
     if el.has_event_handler() {
         cx.on_element(
-            format!("<{}> with event handler(s) must have a `role` attribute.", el.tag),
+            format!(
+                "<{}> with event handler(s) must have a `role` attribute.",
+                el.tag
+            ),
             "Add a `role` attribute that describes the element's purpose, or use a semantic element like <button> or <a>.",
         );
     }
 }
 
 fn prefer_tag_over_role(el: &HtmlElement, cx: &mut Emitter<'_>) {
-    let Some((attr, val, role)) = role_attr(el) else {
+    let Some((attr, role)) = role_attr(el) else {
         return;
     };
     // Don't flag if the element already *is* the preferred tag.
-    if el.tag.implicit_role() == Some(role) {
+    if el.tag.implicit_role() == Some(role) || el.implicit_role() == Some(role) {
         return;
     }
     if let Some(preferred) = role.preferred_tag() {
         cx.on_attr(
             attr,
-            format!("Prefer using the {preferred} element instead of `role=\"{val}\"`."),
+            format!("Prefer using the {preferred} element instead of `role=\"{role}\"`."),
             format!(
                 "Use {preferred} which has built-in semantics and keyboard behavior instead of relying on ARIA."
             ),
@@ -626,28 +755,42 @@ fn prefer_tag_over_role(el: &HtmlElement, cx: &mut Emitter<'_>) {
 }
 
 fn role_has_required_aria_props(el: &HtmlElement, cx: &mut Emitter<'_>) {
-    let Some((attr, val, role)) = role_attr(el) else {
+    let Some((attr, role)) = role_attr(el) else {
         return;
     };
-    // For the heading role on <h1>-<h6>, the level is implicit.
-    if role == Role::Heading && el.tag.is_heading() {
+    // Native semantics already supply the state: the level of <h1>-<h6>,
+    // or the checked state of a checkbox/radio input given a toggle role.
+    if el.implicit_role() == Some(role) || (role == Role::Heading && el.tag.is_heading()) {
         return;
     }
-    let missing: Vec<String> = role
-        .required_aria_props()
+    let checkable_input =
+        el.tag == Tag::Input && matches!(el.input_type().as_deref(), Some("checkbox" | "radio"));
+    let toggle_role = matches!(
+        role,
+        Role::Checkbox | Role::Radio | Role::Switch | Role::MenuItemCheckbox | Role::MenuItemRadio
+    );
+    if checkable_input && toggle_role {
+        return;
+    }
+
+    let mut required: Vec<Aria> = role.required_aria_props().to_vec();
+    if role == Role::Separator && el.is_focusable() {
+        required.push(Aria::ValueNow);
+    }
+    let missing: Vec<String> = required
         .iter()
-        .filter(|req| !el.has_attr(&A::Aria(**req)))
+        .filter(|req| !el.may_have_attr(&A::Aria(**req)))
         .map(|a| format!("`{a}`"))
         .collect();
     if !missing.is_empty() {
         cx.on_attr(
             attr,
             format!(
-                "<{}> with role=\"{val}\" is missing required ARIA properties: {}.",
+                "<{}> with role=\"{role}\" is missing required ARIA properties: {}.",
                 el.tag,
                 missing.join(", ")
             ),
-            format!("Add the required ARIA properties for the \"{val}\" role."),
+            format!("Add the required ARIA properties for the \"{role}\" role."),
         );
     }
 }

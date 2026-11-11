@@ -349,10 +349,10 @@ fn test_audio_without_caption() {
 }
 
 #[test]
-fn test_video_with_aria_label_ok() {
+fn test_video_with_aria_label_still_needs_captions() {
     let diags =
         lint_source(r#"fn c() { html! { <video src="v.mp4" aria-label="Tutorial"></video> } }"#);
-    assert!(!has_lint(&diags, Rule::MediaHasCaption));
+    assert!(has_lint(&diags, Rule::MediaHasCaption));
 }
 
 // --- MouseEventsHaveKeyEvents ---
@@ -429,9 +429,19 @@ fn test_article_with_interactive_role_and_click_ok() {
 // --- NoNoninteractiveElementToInteractiveRole ---
 
 #[test]
-fn test_div_with_interactive_role() {
-    let diags = lint_source(r#"fn c() { html! { <div role="button"></div> } }"#);
+fn test_semantic_element_with_interactive_role() {
+    let diags = lint_source(r#"fn c() { html! { <h2 role="button">{"x"}</h2> } }"#);
     assert!(has_lint(
+        &diags,
+        Rule::NoNoninteractiveElementToInteractiveRole
+    ));
+}
+
+#[test]
+fn test_static_element_with_interactive_role_ok() {
+    // <div>/<span> have no semantics to override.
+    let diags = lint_source(r#"fn c() { html! { <div role="button"></div> } }"#);
+    assert!(!has_lint(
         &diags,
         Rule::NoNoninteractiveElementToInteractiveRole
     ));
@@ -560,4 +570,240 @@ fn test_rule_names_round_trip() {
     assert_eq!("alt-text".parse::<Rule>(), Ok(Rule::AltText));
     assert!(Rule::all().all(|r| !r.description().starts_with(char::is_whitespace)));
     assert!(Rule::all().all(|r| r.guidelines().iter().all(|g| g.starts_with("https://"))));
+}
+
+// --- Accuracy regressions: correct markup must not be flagged ---
+
+fn rules(diags: &[LintDiagnostic]) -> Vec<String> {
+    diags
+        .iter()
+        .map(|d| format!("{}@{}:{}", d.rule, d.line, d.column))
+        .collect()
+}
+
+#[test]
+fn test_media_with_caption_track_ok() {
+    let diags = lint_source(
+        r#"fn c() { html! { <video src="v.mp4"><track kind="captions" src="c.vtt" srclang="en" /></video> } }"#,
+    );
+    assert!(
+        !has_lint(&diags, Rule::MediaHasCaption),
+        "{:?}",
+        rules(&diags)
+    );
+}
+
+#[test]
+fn test_media_with_subtitles_only_is_flagged() {
+    let diags = lint_source(
+        r#"fn c() { html! { <audio src="a.mp3"><track kind="subtitles" src="s.vtt" /></audio> } }"#,
+    );
+    assert!(has_lint(&diags, Rule::MediaHasCaption));
+}
+
+#[test]
+fn test_muted_video_and_dynamic_tracks_ok() {
+    let diags = lint_source(
+        r#"fn c() { html! { <div><video src="v.mp4" muted=true></video><video src="w.mp4">{tracks}</video></div> } }"#,
+    );
+    assert!(
+        !has_lint(&diags, Rule::MediaHasCaption),
+        "{:?}",
+        rules(&diags)
+    );
+}
+
+#[test]
+fn test_input_roles_depend_on_type() {
+    let diags = lint_source(
+        r#"fn c() { html! { <div>
+            <input type="checkbox" aria-checked="mixed" aria-label="All" />
+            <input type="range" aria-valuetext="Medium" aria-label="Volume" />
+            <input type="checkbox" role="switch" aria-label="Wi-Fi" />
+        </div> } }"#,
+    );
+    assert!(
+        !has_lint(&diags, Rule::RoleSupportsAriaProps),
+        "{:?}",
+        rules(&diags)
+    );
+    assert!(
+        !has_lint(&diags, Rule::RoleHasRequiredAriaProps),
+        "{:?}",
+        rules(&diags)
+    );
+}
+
+#[test]
+fn test_control_labels() {
+    let ok = lint_source(
+        r#"fn c() { html! { <form>
+            <label for="email">{"Email"}</label>
+            <input type="email" id="email" />
+            <label>{"Name"} <input type="text" /></label>
+            <input type="hidden" name="csrf" value="x" />
+            <input type="submit" />
+            <input type="button" value="Preview" />
+            <input id={dynamic_id} />
+            <button>{"Send"}</button>
+        </form> } }"#,
+    );
+    assert!(
+        !has_lint(&ok, Rule::ControlHasAssociatedLabel),
+        "{:?}",
+        rules(&ok)
+    );
+
+    let bad = lint_source(
+        r#"fn c() { html! { <form><input type="text" id="nope" /><select></select><button></button></form> } }"#,
+    );
+    assert_eq!(
+        bad.iter()
+            .filter(|d| d.rule == Rule::ControlHasAssociatedLabel)
+            .count(),
+        3,
+        "{:?}",
+        rules(&bad)
+    );
+}
+
+#[test]
+fn test_label_needs_a_control_and_text() {
+    let no_control = lint_source(r#"fn c() { html! { <label>{"Name"}</label> } }"#);
+    assert!(has_lint(&no_control, Rule::LabelHasAssociatedControl));
+
+    let no_text = lint_source(r#"fn c() { html! { <label for="x"></label> } }"#);
+    assert!(has_lint(&no_text, Rule::LabelHasAssociatedControl));
+
+    let ok = lint_source(
+        r#"fn c() { html! { <div><label>{"Name"}<input /></label><label for="x">{"X"}</label><label><Checkbox /></label></div> } }"#,
+    );
+    assert!(
+        !has_lint(&ok, Rule::LabelHasAssociatedControl),
+        "{:?}",
+        rules(&ok)
+    );
+}
+
+#[test]
+fn test_redundant_alt_matches_whole_words_only() {
+    let ok = lint_source(
+        r#"fn c() { html! { <div><img src="s.png" alt="Silicon Valley skyline" /><img src="p.png" alt="Photographer at work" /></div> } }"#,
+    );
+    assert!(!has_lint(&ok, Rule::ImgRedundantAlt), "{:?}", rules(&ok));
+    let bad = lint_source(r#"fn c() { html! { <img src="c.png" alt="Photo of a cat" /> } }"#);
+    assert!(has_lint(&bad, Rule::ImgRedundantAlt));
+}
+
+#[test]
+fn test_aria_1_2_and_module_roles_are_valid() {
+    let diags = lint_source(
+        r#"fn c() { html! { <div>
+            <div role="paragraph">{"x"}</div>
+            <div role="generic">{"x"}</div>
+            <span role="time">{"x"}</span>
+            <section role="doc-chapter">{"x"}</section>
+            <svg role="graphics-document"></svg>
+            <div role="switch checkbox" aria-checked="true" tabindex="0">{"x"}</div>
+        </div> } }"#,
+    );
+    assert!(!has_lint(&diags, Rule::AriaRole), "{:?}", rules(&diags));
+}
+
+#[test]
+fn test_autocomplete_contact_tokens() {
+    let ok = lint_source(
+        r#"fn c() { html! { <input autocomplete="work email" aria-label="Email" /> } }"#,
+    );
+    assert!(!has_lint(&ok, Rule::AutocompleteValid));
+    let bad =
+        lint_source(r#"fn c() { html! { <input autocomplete="work name" aria-label="Name" /> } }"#);
+    assert!(has_lint(&bad, Rule::AutocompleteValid));
+}
+
+#[test]
+fn test_ambiguous_link_text_from_content() {
+    let bad = lint_source(r#"fn c() { html! { <a href="/docs">{"Click here!"}</a> } }"#);
+    assert!(has_lint(&bad, Rule::AnchorAmbiguousText));
+    let leptos = lint_source(r#"fn c() { view! { <a href="/docs">"Learn more"</a> } }"#);
+    assert!(has_lint(&leptos, Rule::AnchorAmbiguousText));
+    let labelled = lint_source(
+        r#"fn c() { html! { <a href="/docs" aria-label="Read the docs">{"here"}</a> } }"#,
+    );
+    assert!(!has_lint(&labelled, Rule::AnchorAmbiguousText));
+    let dynamic = lint_source(r#"fn c() { html! { <a href="/docs">{label}</a> } }"#);
+    assert!(!has_lint(&dynamic, Rule::AnchorAmbiguousText));
+}
+
+#[test]
+fn test_custom_widget_pattern_ok() {
+    let diags = lint_source(
+        r#"fn c() { html! { <ul role="tablist">
+            <li role="tab" aria-selected="true" tabindex="0" onclick={f} onkeydown={g}>{"Tab"}</li>
+        </ul> } }"#,
+    );
+    for rule in [
+        Rule::NoNoninteractiveElementToInteractiveRole,
+        Rule::NoNoninteractiveTabindex,
+        Rule::NoNoninteractiveElementInteractions,
+        Rule::ClickEventsHaveKeyEvents,
+        Rule::InteractiveSupportsFocus,
+    ] {
+        assert!(!has_lint(&diags, rule), "{rule}: {:?}", rules(&diags));
+    }
+}
+
+#[test]
+fn test_anchor_without_href_used_as_button() {
+    let diags = lint_source(r#"fn c() { html! { <a onclick={go}>{"Go"}</a> } }"#);
+    assert!(has_lint(&diags, Rule::AnchorIsValid));
+    let js = lint_source(r#"fn c() { html! { <a href="javascript:alert(1)">{"Go"}</a> } }"#);
+    assert!(has_lint(&js, Rule::AnchorIsValid));
+}
+
+#[test]
+fn test_spread_attributes_suppress_missing_attribute_rules() {
+    let diags = lint_source(
+        r#"fn c() { view! { <div><img {..attrs} /><iframe {..attrs}></iframe></div> } }"#,
+    );
+    assert!(!has_lint(&diags, Rule::AltText), "{:?}", rules(&diags));
+    assert!(
+        !has_lint(&diags, Rule::IframeHasTitle),
+        "{:?}",
+        rules(&diags)
+    );
+}
+
+#[test]
+fn test_meter_requires_only_valuenow() {
+    let ok = lint_source(
+        r#"fn c() { html! { <div role="meter" aria-valuenow="3" aria-label="Fuel"></div> } }"#,
+    );
+    assert!(
+        !has_lint(&ok, Rule::RoleHasRequiredAriaProps),
+        "{:?}",
+        rules(&ok)
+    );
+}
+
+#[test]
+fn test_disabled_and_hrefless_controls_are_not_focusable() {
+    let diags = lint_source(
+        r#"fn c() { html! { <div><button disabled=true aria-hidden="true">{"x"}</button><a aria-hidden="true">{"y"}</a></div> } }"#,
+    );
+    assert!(
+        !has_lint(&diags, Rule::NoAriaHiddenOnFocusable),
+        "{:?}",
+        rules(&diags)
+    );
+}
+
+#[test]
+fn test_token_list_aria_values() {
+    let ok = lint_source(
+        r#"fn c() { html! { <div aria-live="polite" aria-relevant="additions text"></div> } }"#,
+    );
+    assert!(!has_lint(&ok, Rule::AriaProptypes));
+    let bad = lint_source(r#"fn c() { html! { <div aria-relevant="everything"></div> } }"#);
+    assert!(has_lint(&bad, Rule::AriaProptypes));
 }

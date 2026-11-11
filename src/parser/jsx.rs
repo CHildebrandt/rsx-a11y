@@ -62,19 +62,24 @@ impl Converter<'_> {
         Some(match node {
             Node::Element(el) => {
                 let (line, column) = position(el.open_tag.token_lt.span().start());
+                let mut has_spread = false;
+                let mut attributes = Vec::new();
+                for attr in el.attributes() {
+                    match attr {
+                        NodeAttribute::Attribute(keyed) => attributes.push(attribute(keyed)),
+                        NodeAttribute::Block(block) => match shorthand_attribute(block) {
+                            Some(attr) => attributes.push(attr),
+                            // `{..spread}` or a computed attribute.
+                            None => has_spread = true,
+                        },
+                    }
+                }
                 MNode::Element(MElement {
                     name: el.name().to_string(),
+                    has_spread,
                     line,
                     column,
-                    attributes: el
-                        .attributes()
-                        .iter()
-                        .filter_map(|attr| match attr {
-                            NodeAttribute::Attribute(keyed) => Some(attribute(keyed)),
-                            // `{..spread}` / block attributes have no static name.
-                            NodeAttribute::Block(_) => None,
-                        })
-                        .collect(),
+                    attributes,
                     children: self.nodes(&el.children),
                     self_closing: el.close_tag.is_none(),
                 })
@@ -124,6 +129,24 @@ fn stashed(body: &TokenStream) -> MNode {
         }
     }
     MNode::Dynamic
+}
+
+/// Yew's shorthand `{onclick}`, meaning `onclick={onclick}`.
+fn shorthand_attribute(block: &NodeBlock) -> Option<HtmlAttribute> {
+    let NodeBlock::ValidBlock(b) = block else {
+        return None;
+    };
+    let [syn::Stmt::Expr(syn::Expr::Path(path), None)] = b.stmts.as_slice() else {
+        return None;
+    };
+    let ident = path.path.get_ident()?;
+    let (line, column) = position(ident.span().start());
+    Some(HtmlAttribute {
+        name: AttributeName::parse(&ident.to_string()),
+        value: AttrValue::Dynamic,
+        line,
+        column,
+    })
 }
 
 fn attribute(keyed: &KeyedAttribute) -> HtmlAttribute {
