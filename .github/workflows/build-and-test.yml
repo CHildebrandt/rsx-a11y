@@ -92,6 +92,8 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p playground --target wasm32-unknown-unknown --locked
+      - name: Lint the playground with rsx-a11y itself
+        run: cargo run -p rsx-a11y --locked -- playground/src
 
   package:
     name: Package

@@ -6,19 +6,68 @@ fn main() {
     leptos::mount::mount_to_body(App);
 }
 
-/// Build the default editor text with the chosen macro wrapper.
-fn default_code(macro_name: &str) -> String {
-    format!(
-        "fn component() {{\n    {}! {{\n        <img src=\"photo.jpg\" />\n        <div role=\"fake-role\" aria-hidden=\"yes\">\n            <div role=\"button\" onclick={{handler}}>{{\"Click me\"}}</div>\n            <marquee>{{\"Breaking news!\"}}</marquee>\n            <a href=\"#\">{{\"Link\"}}</a>\n            <h1></h1>\n        </div>\n    }}\n}}",
-        macro_name
-    )
+/// A supported framework and the example shown when it is selected.
+struct Framework {
+    name: &'static str,
+    macro_name: &'static str,
+    example: &'static str,
 }
 
-/// Available macro wrappers.
-const FRAMEWORKS: &[(&str, &str, &str)] = &[
-    ("Yew", "html", "html!"),
-    ("Leptos", "view", "view!"),
-    ("Dioxus", "rsx", "rsx!"),
+const FRAMEWORKS: &[Framework] = &[
+    Framework {
+        name: "Yew",
+        macro_name: "html!",
+        example: r##"fn component() -> Html {
+    html! {
+        <div>
+            <img src="photo.jpg" />
+            <div role="fake-role" aria-hidden="yes">
+                <div onclick={handler}>{"Click me"}</div>
+                <marquee>{"Breaking news!"}</marquee>
+                <a href="#">{"Link"}</a>
+                <h1></h1>
+            </div>
+            <label>{"Email"}</label>
+            <input type="email" />
+        </div>
+    }
+}"##,
+    },
+    Framework {
+        name: "Leptos",
+        macro_name: "view!",
+        example: r##"#[component]
+fn Component() -> impl IntoView {
+    view! {
+        <img src="photo.jpg" />
+        <div role="fake-role" aria-hidden="yes">
+            <div on:click=move |_| handler()>"Click me"</div>
+            <marquee>"Breaking news!"</marquee>
+            <a href="#">"Link"</a>
+            <h1></h1>
+        </div>
+        <label>"Email"</label>
+        <input type="email" />
+    }
+}"##,
+    },
+    Framework {
+        name: "Dioxus",
+        macro_name: "rsx!",
+        example: r##"fn Component() -> Element {
+    rsx! {
+        img { src: "photo.jpg" }
+        div { role: "fake-role", aria_hidden: "yes",
+            div { onclick: move |_| handler(), "Click me" }
+            marquee { "Breaking news!" }
+            a { href: "#", "Link" }
+            h1 {}
+        }
+        label { "Email" }
+        input { r#type: "email" }
+    }
+}"##,
+    },
 ];
 
 /// Run the linter on editor code (should be a complete Rust snippet).
@@ -30,12 +79,7 @@ fn lint_snippet(code: &str) -> LintResult {
             LintResult {
                 diagnostics,
                 elements_found: parsed.elements.len(),
-                error: (!errors.is_empty()).then(|| {
-                    errors.join(
-                        "
-",
-                    )
-                }),
+                error: (!errors.is_empty()).then(|| errors.join("\n")),
             }
         }
         Err(e) => LintResult {
@@ -53,26 +97,47 @@ struct LintResult {
     error: Option<String>,
 }
 
+impl LintResult {
+    /// One-line status, announced to screen readers when it changes.
+    fn status(&self) -> String {
+        let plural = |n: usize, word: &str| format!("{n} {word}{}", if n == 1 { "" } else { "s" });
+        let mut status = format!(
+            "{}, {}",
+            plural(self.elements_found, "element"),
+            plural(self.diagnostics.len(), "issue")
+        );
+        if self.error.is_some() {
+            status.push_str(", parse error");
+        }
+        status
+    }
+}
+
 /// Split text into plain-text and URL segments, rendering URLs as clickable `<a>` elements.
-fn linkify(text: &str) -> Vec<leptos::tachys::view::any_view::AnyView> {
-    let mut parts: Vec<leptos::tachys::view::any_view::AnyView> = Vec::new();
+fn linkify(text: &str) -> Vec<AnyView> {
+    let mut parts: Vec<AnyView> = Vec::new();
     let mut remaining = text;
     while let Some(start) = remaining
         .find("https://")
         .or_else(|| remaining.find("http://"))
     {
         if start > 0 {
-            let before = remaining[..start].to_string();
-            parts.push(before.into_any());
+            parts.push(remaining[..start].to_string().into_any());
         }
         let after = &remaining[start..];
         let end = after
             .find(|c: char| c.is_whitespace())
             .unwrap_or(after.len());
         let url = after[..end].to_string();
-        let url2 = url.clone();
+        let href = url.clone();
         parts.push(
-            view! { <a class="help-link" href={url} target="_blank" rel="noopener noreferrer">{url2}</a> }.into_any(),
+            view! {
+                <a class="help-link" href=href target="_blank" rel="noopener noreferrer">
+                    {url}
+                    <span class="visually-hidden">" (opens in a new tab)"</span>
+                </a>
+            }
+            .into_any(),
         );
         remaining = &after[end..];
     }
@@ -84,168 +149,182 @@ fn linkify(text: &str) -> Vec<leptos::tachys::view::any_view::AnyView> {
 
 #[component]
 fn App() -> impl IntoView {
-    let (code, set_code) = signal(default_code(FRAMEWORKS[0].1));
+    let (code, set_code) = signal(FRAMEWORKS[0].example.to_string());
     let (framework_idx, set_framework_idx) = signal(0usize);
 
-    let result = Memo::new(move |_| {
-        let c = code.get();
-        // framework_idx is read so the memo stays subscribed, but the
-        // macro name is already embedded in the editor text.
-        let _ = framework_idx.get();
-        lint_snippet(&c)
-    });
+    let result = Memo::new(move |_| lint_snippet(&code.get()));
+
+    let select_framework = move |i: usize| {
+        let old_idx = framework_idx.get_untracked();
+        if old_idx == i {
+            return;
+        }
+        let (old, new) = (&FRAMEWORKS[old_idx], &FRAMEWORKS[i]);
+        set_code.update(|c| {
+            *c = if c.as_str() == old.example {
+                // Untouched example: show the new framework's example.
+                new.example.to_string()
+            } else {
+                // User code: just swap the macro name.
+                c.replacen(old.macro_name, new.macro_name, 1)
+            };
+        });
+        set_framework_idx.set(i);
+    };
 
     view! {
+        <a class="skip-link" href="#code-editor">"Skip to editor"</a>
         <div class="app">
             <header class="header">
-                <img src="logo.png" alt="rsx-a11y logo" class="logo" />
+                <img src="logo.png" alt="" class="logo" />
                 <div>
-                    <h1>
-                        "rsx-a11y Playground"
-                    </h1>
+                    <h1>"rsx-a11y Playground"</h1>
                     <p class="subtitle">
-                        "Paste HTML-like macro content to check for accessibility issues"
+                        "Paste a Yew, Leptos or Dioxus component to check it for accessibility issues"
                     </p>
                 </div>
             </header>
 
-            <div class="toolbar">
-                <label>"Framework: "</label>
-                <div class="framework-tabs">
-                    {FRAMEWORKS
-                        .iter()
-                        .enumerate()
-                        .map(|(i, (name, _, label))| {
-                            let name = *name;
-                            let label = *label;
-                            view! {
-                                <button
-                                    class:active=move || framework_idx.get() == i
-                                    on:click=move |_| {
-                                        let old_idx = framework_idx.get_untracked();
-                                        if old_idx != i {
-                                            let (_, old_macro, _) = FRAMEWORKS[old_idx];
-                                            let (_, new_macro, _) = FRAMEWORKS[i];
-                                            let old_prefix = format!("{}!", old_macro);
-                                            let new_prefix = format!("{}!", new_macro);
-                                            set_code.update(|c| {
-                                                *c = c.replacen(&old_prefix, &new_prefix, 1);
-                                            });
-                                            set_framework_idx.set(i);
-                                        }
-                                    }
-                                    title=label
-                                >
-                                    {name}
-                                </button>
-                            }
-                        })
-                        .collect::<Vec<_>>()}
-                </div>
-                <div class="stats">
-                    {move || {
-                        let r = result.get();
-                        let diag_count = r.diagnostics.len();
-                        let el_count = r.elements_found;
-                        format!("{} element(s), {} issue(s)", el_count, diag_count)
-                    }}
-                </div>
-            </div>
-
-            <div class="editor-container">
-                <div class="panel">
-                    <div class="panel-header">"Input"</div>
-                    <textarea
-                        class="code-editor"
-                        prop:value=move || code.get()
-                        on:input=move |ev| {
-                            let target = event_target::<web_sys::HtmlTextAreaElement>(&ev);
-                            set_code.set(target.value());
-                        }
-                        spellcheck="false"
-                        autocomplete="off"
-                    ></textarea>
-                </div>
-                <div class="panel">
-                    <div class="panel-header">"Results"</div>
-                    <div class="results">
-                        {move || {
-                            let r = result.get();
-
-                            if let Some(ref err) = r.error {
-                                let err = err.clone();
-                                return view! {
-                                    <div class="parse-error">
-                                        <strong>"Parse error: "</strong>
-                                        {err}
-                                    </div>
-                                }
-                                    .into_any();
-                            }
-
-                            if r.diagnostics.is_empty() {
-                                return view! {
-                                    <div class="no-issues">
-                                        "✓ No accessibility issues found!"
-                                    </div>
-                                }
-                                    .into_any();
-                            }
-
-                            view! {
-                                <div class="diagnostics-list">
-                                    {r
-                                        .diagnostics
-                                        .iter()
-                                        .map(|d| {
-                                            let severity_class = match d.severity {
-                                                Severity::Error => "severity-error",
-                                                Severity::Warning => "severity-warning",
-                                                Severity::Info => "severity-info",
-                                            };
-                                            let severity_label = match d.severity {
-                                                Severity::Error => "error",
-                                                Severity::Warning => "warning",
-                                                Severity::Info => "info",
-                                            };
-                                            let help = d.help.clone();
-                                            let rule = d.rule.to_string();
-                                            view! {
-                                                <div class="diagnostic">
-                                                    <div class="diag-header">
-                                                        <span class={severity_class}>
-                                                            {severity_label}
-                                                        </span>
-                                                        <span class="lint-id">{rule}</span>
-                                                    </div>
-                                                    <div class="diag-message">{d.message.clone()}</div>
-                                                    <div class="diag-location">
-                                                        {format!("line {}, col {}", d.line, d.column)}
-                                                    </div>
-                                                    {help
-                                                        .map(|h| {
-                                                            let fragments = linkify(&h);
-                                                            view! {
-                                                                <div class="diag-help">
-                                                                    <span class="help-label">"help: "</span>
-                                                                    {fragments}
-                                                                </div>
-                                                            }
-                                                        })}
-                                                </div>
+            <main>
+                <div class="toolbar">
+                    <div class="framework-picker" role="group" aria-labelledby="framework-label">
+                        <span id="framework-label" class="toolbar-label">
+                            "Framework:"
+                        </span>
+                        <div class="framework-tabs">
+                            {FRAMEWORKS
+                                .iter()
+                                .enumerate()
+                                .map(|(i, framework)| {
+                                    view! {
+                                        <button
+                                            type="button"
+                                            class:active=move || framework_idx.get() == i
+                                            aria-pressed=move || {
+                                                if framework_idx.get() == i { "true" } else { "false" }
                                             }
-                                        })
-                                        .collect::<Vec<_>>()}
-                                </div>
-                            }
-                                .into_any()
-                        }}
+                                            on:click=move |_| select_framework(i)
+                                        >
+                                            {framework.name}
+                                        </button>
+                                    }
+                                })
+                                .collect::<Vec<_>>()}
+                        </div>
                     </div>
+                    <p class="stats" role="status" aria-live="polite">
+                        {move || result.get().status()}
+                    </p>
                 </div>
-            </div>
+
+                <div class="editor-container">
+                    <section class="panel" aria-labelledby="input-heading">
+                        <h2 class="panel-header" id="input-heading">
+                            <label for="code-editor">"Input"</label>
+                        </h2>
+                        <textarea
+                            id="code-editor"
+                            class="code-editor"
+                            prop:value=move || code.get()
+                            on:input=move |ev| {
+                                let target = event_target::<web_sys::HtmlTextAreaElement>(&ev);
+                                set_code.set(target.value());
+                            }
+                            spellcheck="false"
+                            autocomplete="off"
+                            aria-describedby="editor-hint"
+                        ></textarea>
+                        <p id="editor-hint" class="visually-hidden">
+                            "Results update as you type. Press Tab to leave the editor."
+                        </p>
+                    </section>
+                    <section class="panel" aria-labelledby="results-heading">
+                        <h2 class="panel-header" id="results-heading">"Results"</h2>
+                        <div class="results">
+                            {move || {
+                                let r = result.get();
+                                let error = r
+                                    .error
+                                    .clone()
+                                    .map(|err| {
+                                        view! {
+                                            <div class="parse-error">
+                                                <strong>"Parse error: "</strong>
+                                                {err}
+                                            </div>
+                                        }
+                                    });
+                                if r.diagnostics.is_empty() {
+                                    let none = r
+                                        .error
+                                        .is_none()
+                                        .then(|| {
+                                            view! {
+                                                <p class="no-issues">
+                                                    <span aria-hidden="true">"✓ "</span>
+                                                    "No accessibility issues found!"
+                                                </p>
+                                            }
+                                        });
+                                    return view! { {error} {none} }.into_any();
+                                }
+                                view! {
+                                    {error}
+                                    <ul class="diagnostics-list">
+                                        {r
+                                            .diagnostics
+                                            .iter()
+                                            .map(|d| {
+                                                let severity_class = match d.severity {
+                                                    Severity::Error => "severity-error",
+                                                    Severity::Warning => "severity-warning",
+                                                    Severity::Info => "severity-info",
+                                                };
+                                                let help = d.help.clone();
+                                                view! {
+                                                    <li class="diagnostic">
+                                                        <p class="diag-header">
+                                                            <span class=severity_class>
+                                                                {d.severity.to_string()}
+                                                            </span>
+                                                            " "
+                                                            <code class="lint-id">{d.rule.to_string()}</code>
+                                                        </p>
+                                                        <p class="diag-message">{d.message.clone()}</p>
+                                                        <p class="diag-location">
+                                                            {format!("Line {}, column {}", d.line, d.column)}
+                                                        </p>
+                                                        {help
+                                                            .map(|h| {
+                                                                view! {
+                                                                    <p class="diag-help">
+                                                                        <span class="help-label">"Help: "</span>
+                                                                        {linkify(&h)}
+                                                                    </p>
+                                                                }
+                                                            })}
+                                                    </li>
+                                                }
+                                            })
+                                            .collect::<Vec<_>>()}
+                                    </ul>
+                                }
+                                    .into_any()
+                            }}
+                        </div>
+                    </section>
+                </div>
+            </main>
             <footer class="footer">
                 "Powered by "
-                <a href="https://github.com/CHildebrandt/rsx-a11y" target="_blank">"rsx-a11y"</a>
+                <a
+                    href="https://github.com/CHildebrandt/rsx-a11y"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                >
+                    "rsx-a11y"
+                    <span class="visually-hidden">" (opens in a new tab)"</span>
+                </a>
                 " — ARIA linting for Rust web frameworks"
             </footer>
         </div>
