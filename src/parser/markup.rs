@@ -4,7 +4,7 @@
 use proc_macro2::LineColumn;
 
 use super::{AttrValue, HtmlAttribute, HtmlElement};
-use crate::dom::{AttributeName, Tag};
+use crate::dom::{Aria, AttributeName, Tag};
 
 /// A node in a parsed markup tree.
 #[derive(Debug, Clone)]
@@ -126,33 +126,59 @@ impl Content {
     fn collect(&mut self, nodes: &[MNode]) {
         for node in nodes {
             match node {
-                MNode::Text(text) => {
-                    self.text.push(' ');
-                    self.text.push_str(text);
-                }
+                MNode::Text(text) => self.push(text),
                 MNode::Dynamic => self.dynamic = true,
                 MNode::Fragment(children) => self.collect(children),
-                MNode::Element(el) => match el.name.parse::<Tag>() {
-                    Ok(Tag::Img) => {
-                        let alt = el.attributes.iter().find(|a| a.name == AttributeName::Alt);
-                        match alt.map(|a| &a.value) {
-                            Some(AttrValue::Static(alt)) => {
-                                self.text.push(' ');
-                                self.text.push_str(alt);
-                            }
-                            Some(_) => self.dynamic = true,
-                            None => {}
-                        }
-                    }
-                    Ok(_) => {
-                        self.dynamic |= el.has_spread;
-                        self.collect(&el.children);
-                    }
-                    // A component can render anything.
-                    Err(_) => self.dynamic = true,
-                },
+                MNode::Element(el) => self.element(el),
             }
         }
+    }
+}
+
+impl Content {
+    /// A descendant element contributes its own accessible name: a hidden
+    /// element contributes nothing, `aria-labelledby` and spread attributes
+    /// make it unknown, a non-empty `aria-label` replaces its content, and an
+    /// image contributes its `alt` text.
+    fn element(&mut self, el: &MElement) {
+        let Ok(tag) = el.name.parse::<Tag>() else {
+            // A component can render anything.
+            self.dynamic = true;
+            return;
+        };
+        let attr = |name: AttributeName| el.attributes.iter().find(|a| a.name == name);
+        if attr(AttributeName::Aria(Aria::Hidden)).is_some_and(|a| a.value.is("true")) {
+            return;
+        }
+        if el.has_spread || attr(AttributeName::Aria(Aria::LabelledBy)).is_some() {
+            self.dynamic = true;
+            return;
+        }
+        match attr(AttributeName::Aria(Aria::Label)).map(|a| &a.value) {
+            Some(AttrValue::Static(label)) if !label.trim().is_empty() => {
+                self.push(label);
+                return;
+            }
+            Some(AttrValue::Static(_)) | None => {}
+            Some(_) => {
+                self.dynamic = true;
+                return;
+            }
+        }
+        if tag == Tag::Img {
+            match attr(AttributeName::Alt).map(|a| &a.value) {
+                Some(AttrValue::Static(alt)) => self.push(alt),
+                Some(_) => self.dynamic = true,
+                None => {}
+            }
+        } else {
+            self.collect(&el.children);
+        }
+    }
+
+    fn push(&mut self, text: &str) {
+        self.text.push(' ');
+        self.text.push_str(text);
     }
 }
 
