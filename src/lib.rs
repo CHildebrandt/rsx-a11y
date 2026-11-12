@@ -2,7 +2,8 @@
 //! frameworks (Yew, Leptos, Dioxus).
 //!
 //! The crate parses Rust source files, finds the markup inside `html!`,
-//! `view!` and `rsx!` macro invocations, and checks it against
+//! `view!` and `rsx!` macro invocations (JSX-style markup as well as Dioxus
+//! RSX), and checks it against
 //! WAI-ARIA 1.2 and common accessibility rules inspired by
 //! [`eslint-plugin-jsx-a11y`](https://github.com/jsx-eslint/eslint-plugin-jsx-a11y).
 //! See [`Rule`] for the full list of rules.
@@ -155,9 +156,17 @@ impl fmt::Display for LintSummary {
 ///
 /// `file_name` is only used to label diagnostics. Diagnostics are sorted by
 /// line and column.
+///
+/// # Errors
+///
+/// Returns the first parse error if `source` is not valid Rust or any markup
+/// macro in it could not be parsed.
 pub fn check_source(source: &str, file_name: &str) -> Result<Vec<LintDiagnostic>, ParseError> {
-    let elements = parser::parse_source(source, file_name)?;
-    let mut diagnostics: Vec<_> = lints::run_all_lints(&elements).collect();
+    let parsed = parser::parse_source(source, file_name)?;
+    if let Some(error) = parsed.errors.into_iter().next() {
+        return Err(error);
+    }
+    let mut diagnostics: Vec<_> = lints::run_all_lints(&parsed.elements).collect();
     sort_diagnostics(&mut diagnostics);
     Ok(diagnostics)
 }
@@ -194,16 +203,18 @@ pub fn check_project_with(
 ///
 /// Files are processed in parallel when the `parallel` feature is enabled.
 pub fn check_files(files: &[PathBuf], options: &LintOptions) -> LintSummary {
-    let lint_one = |file: &PathBuf| -> Result<Option<Vec<LintDiagnostic>>, ParseError> {
-        let elements = parser::parse_file(file)?;
-        if elements.is_empty() {
-            return Ok(None);
+    // Returns the file's diagnostics (`None` if it has no markup) and errors.
+    let lint_one = |file: &PathBuf| -> (Option<Vec<LintDiagnostic>>, Vec<ParseError>) {
+        match parser::parse_file(file) {
+            Err(e) => (None, vec![e]),
+            Ok(parsed) if parsed.elements.is_empty() => (None, parsed.errors),
+            Ok(parsed) => {
+                let diagnostics = lints::run_all_lints(&parsed.elements)
+                    .filter(|d| options.keep(d))
+                    .collect();
+                (Some(diagnostics), parsed.errors)
+            }
         }
-        Ok(Some(
-            lints::run_all_lints(&elements)
-                .filter(|d| options.keep(d))
-                .collect(),
-        ))
     };
 
     #[cfg(feature = "parallel")]
@@ -218,18 +229,17 @@ pub fn check_files(files: &[PathBuf], options: &LintOptions) -> LintSummary {
         files_scanned: files.len(),
         ..LintSummary::default()
     };
-    for result in results {
-        match result {
-            Ok(Some(diagnostics)) => {
-                summary.files_checked += 1;
-                summary.diagnostics.extend(diagnostics);
-            }
-            Ok(None) => {}
-            Err(e) => summary.parse_errors.push(e),
+    for (diagnostics, errors) in results {
+        if let Some(diagnostics) = diagnostics {
+            summary.files_checked += 1;
+            summary.diagnostics.extend(diagnostics);
         }
+        summary.parse_errors.extend(errors);
     }
     sort_diagnostics(&mut summary.diagnostics);
-    summary.parse_errors.sort_by(|a, b| a.file.cmp(&b.file));
+    summary
+        .parse_errors
+        .sort_by(|a, b| (a.file.as_str(), a.line).cmp(&(b.file.as_str(), b.line)));
     summary
 }
 

@@ -4,8 +4,13 @@ use super::*;
 use crate::parser;
 
 fn lint_source(source: &str) -> Vec<LintDiagnostic> {
-    let elements = parser::parse_source(source, "test.rs").unwrap();
-    run_all_lints(&elements).collect()
+    let parsed = parser::parse_source(source, "test.rs").unwrap();
+    assert!(
+        parsed.errors.is_empty(),
+        "parse errors: {:?}",
+        parsed.errors
+    );
+    run_all_lints(&parsed.elements).collect()
 }
 
 fn has_lint(diags: &[LintDiagnostic], id: Rule) -> bool {
@@ -565,4 +570,21 @@ fn test_misspelled_prefixed_aria_attribute() {
         .find(|d| d.rule == Rule::AriaProps)
         .expect("aria-props");
     assert!(d.message.contains("`attr:aria-labl`"), "{}", d.message);
+}
+
+#[test]
+fn test_misspelled_dioxus_aria_attribute() {
+    let diags = lint_source(r#"fn A() -> Element { rsx! { div { aria_labl: "x" } } }"#);
+    let d = diags
+        .iter()
+        .find(|d| d.rule == Rule::AriaProps)
+        .expect("aria-props");
+    assert!(d.message.contains("`aria_labl`"), "{}", d.message);
+}
+
+#[test]
+fn test_negative_tabindex_is_not_focusable() {
+    let diags =
+        lint_source(r#"fn A() -> Element { rsx! { div { tabindex: -1, aria_hidden: "true" } } }"#);
+    assert!(!has_lint(&diags, Rule::NoAriaHiddenOnFocusable));
 }

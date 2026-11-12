@@ -179,13 +179,11 @@ fn aria_activedescendant_has_tabindex(el: &HtmlElement, cx: &mut Emitter<'_>) {
 
 fn aria_props(el: &HtmlElement, cx: &mut Emitter<'_>) {
     for attr in &el.attributes {
-        // Check the name without a Leptos `attr:` prefix, but report it as
-        // written.
+        // Check the name without a Leptos `attr:` prefix, and Dioxus
+        // `aria_*` spellings, but report it as written.
         if let A::Unknown(name) = &attr.name
-            && name
-                .strip_prefix("attr:")
-                .unwrap_or(name)
-                .starts_with("aria-")
+            && let base = name.strip_prefix("attr:").unwrap_or(name)
+            && (base.starts_with("aria-") || base.starts_with("aria_"))
         {
             cx.on_attr(
                 attr,

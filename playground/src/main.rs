@@ -24,12 +24,18 @@ const FRAMEWORKS: &[(&str, &str, &str)] = &[
 /// Run the linter on editor code (should be a complete Rust snippet).
 fn lint_snippet(code: &str) -> LintResult {
     match rsx_a11y::parser::parse_source(code, "<playground>") {
-        Ok(elements) => {
-            let diagnostics: Vec<_> = rsx_a11y::lints::run_all_lints(&elements).collect();
+        Ok(parsed) => {
+            let diagnostics: Vec<_> = rsx_a11y::lints::run_all_lints(&parsed.elements).collect();
+            let errors: Vec<String> = parsed.errors.iter().map(|e| e.to_string()).collect();
             LintResult {
                 diagnostics,
-                elements_found: elements.len(),
-                error: None,
+                elements_found: parsed.elements.len(),
+                error: (!errors.is_empty()).then(|| {
+                    errors.join(
+                        "
+",
+                    )
+                }),
             }
         }
         Err(e) => LintResult {
@@ -166,18 +172,24 @@ fn App() -> impl IntoView {
                         {move || {
                             let r = result.get();
 
-                            if let Some(ref err) = r.error {
-                                let err = err.clone();
-                                return view! {
-                                    <div class="parse-error">
-                                        <strong>"Parse error: "</strong>
-                                        {err}
-                                    </div>
-                                }
-                                    .into_any();
-                            }
+                            // Parse errors are shown above any diagnostics
+                            // from the macros that did parse.
+                            let error = r
+                                .error
+                                .clone()
+                                .map(|err| {
+                                    view! {
+                                        <div class="parse-error">
+                                            <strong>"Parse error: "</strong>
+                                            {err}
+                                        </div>
+                                    }
+                                });
 
                             if r.diagnostics.is_empty() {
+                                if error.is_some() {
+                                    return error.into_any();
+                                }
                                 return view! {
                                     <div class="no-issues">
                                         "✓ No accessibility issues found!"
@@ -187,6 +199,7 @@ fn App() -> impl IntoView {
                             }
 
                             view! {
+                                {error}
                                 <div class="diagnostics-list">
                                     {r
                                         .diagnostics

@@ -55,7 +55,17 @@ Checked 3 files in 12ms. Found 1 error, 2 warnings, 0 infos.
 
 ## Supported Frameworks
 
-The tool parses all macro invocations using [`rstml`](https://github.com/rs-tml/rstml) — no compilation or framework dependencies required. Leptos-specific attribute prefixes like `on:click` and `class:active` are handled automatically.
+| Framework | Macros | Syntax |
+|-----------|--------|--------|
+| [Yew](https://yew.rs) | `html!`, `html_nested!` | JSX-style, including `{ for … }` and `if` blocks |
+| [Leptos](https://leptos.dev) | `view!` | JSX-style, including `on:click`, `class:x`, `attr:aria-*`, `let:item` and the old `view! { cx, … }` form |
+| [Dioxus](https://dioxuslabs.com) | `rsx!` | Dioxus RSX (`div { class: "x", "text" }`), including `for`/`if`, components, spreads and `"{interpolation}"` |
+
+Markup is parsed directly from the source — no compilation or framework dependencies are required. JSX-style markup is parsed with [`rstml`](https://github.com/rs-tml/rstml).
+
+Markup macros are found wherever they appear: inside closures, iterator chains, `{ … }` blocks, attribute values (e.g. Leptos `fallback=|| view! { … }`), and other macros such as `vec![…]`. Components (`<MyComponent>`, `Card { … }`) are not linted themselves, but their children are.
+
+An `html!` or `view!` macro that doesn't start with `<` (for example maud's `html!` or Sycamore's `view!`) uses a syntax this tool doesn't understand and is skipped. Markup that can't be parsed is reported as an error with its line number and exits with status `2`, so unparsed code is never mistaken for clean code.
 
 ## Lint Rules (36)
 
@@ -176,7 +186,7 @@ rsx-a11y --out-file report.txt src/
 ## How It Works
 
 1. **Walk** — Finds all `.rs` files in the target path, processing them in parallel with [rayon](https://docs.rs/rayon). Skips `target/`, `node_modules/`, and hidden directories.
-2. **Parse** — Uses [`syn`](https://docs.rs/syn) to parse each file's AST and visit all macro invocations. Uses [`rstml`](https://github.com/rs-tml/rstml) to parse the token stream inside each macro as HTML elements and attributes.
+2. **Parse** — Uses [`syn`](https://docs.rs/syn) to parse each file's AST, finds `html!`/`view!`/`rsx!` invocations (including nested ones), and parses their markup with [`rstml`](https://github.com/rs-tml/rstml) or a Dioxus RSX parser.
 3. **Lint** — Runs all enabled lint rules against each extracted element. Each rule provides a severity, description, and help text with WCAG references.
 4. **Report** — Outputs diagnostics sorted by file, line, and column. Supports colored terminal output and JSON.
 
