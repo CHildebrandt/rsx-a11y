@@ -33,7 +33,7 @@ jobs:
         with:
           version: "v0.21.14"
       - name: Setup Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
       - name: Build playground
         working-directory: playground
         run: trunk build --release
