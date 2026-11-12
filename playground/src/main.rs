@@ -10,6 +10,8 @@ fn main() {
 struct Framework {
     name: &'static str,
     macro_name: &'static str,
+    /// Whether the macro uses JSX-style markup (as opposed to Dioxus RSX).
+    jsx: bool,
     example: &'static str,
 }
 
@@ -17,6 +19,7 @@ const FRAMEWORKS: &[Framework] = &[
     Framework {
         name: "Yew",
         macro_name: "html!",
+        jsx: true,
         example: r##"fn component() -> Html {
     html! {
         <div>
@@ -36,6 +39,7 @@ const FRAMEWORKS: &[Framework] = &[
     Framework {
         name: "Leptos",
         macro_name: "view!",
+        jsx: true,
         example: r##"#[component]
 fn Component() -> impl IntoView {
     view! {
@@ -54,6 +58,7 @@ fn Component() -> impl IntoView {
     Framework {
         name: "Dioxus",
         macro_name: "rsx!",
+        jsx: false,
         example: r##"fn Component() -> Element {
     rsx! {
         img { src: "photo.jpg" }
@@ -161,15 +166,26 @@ fn App() -> impl IntoView {
         }
         let (old, new) = (&FRAMEWORKS[old_idx], &FRAMEWORKS[i]);
         set_code.update(|c| {
-            *c = if c.as_str() == old.example {
+            if c.as_str() == old.example {
                 // Untouched example: show the new framework's example.
-                new.example.to_string()
-            } else {
-                // User code: just swap the macro name.
-                c.replacen(old.macro_name, new.macro_name, 1)
-            };
+                *c = new.example.to_string();
+            } else if old.jsx && new.jsx {
+                // Edited code in the same syntax: just swap the macro name.
+                *c = c.replacen(old.macro_name, new.macro_name, 1);
+            }
+            // Edited code in another syntax is kept as it is: renaming the
+            // macro would leave markup the new macro cannot parse. The
+            // "Load example" button replaces it on request.
         });
         set_framework_idx.set(i);
+    };
+    let is_example = move || code.get() == FRAMEWORKS[framework_idx.get()].example;
+    let load_example = move |_| {
+        set_code.set(
+            FRAMEWORKS[framework_idx.get_untracked()]
+                .example
+                .to_string(),
+        )
     };
 
     view! {
@@ -185,7 +201,7 @@ fn App() -> impl IntoView {
                 </div>
             </header>
 
-            <main>
+            <main class="main">
                 <div class="toolbar">
                     <div class="framework-picker" role="group" aria-labelledby="framework-label">
                         <span id="framework-label" class="toolbar-label">
@@ -212,6 +228,11 @@ fn App() -> impl IntoView {
                                 .collect::<Vec<_>>()}
                         </div>
                     </div>
+                    <Show when=move || !is_example()>
+                        <button type="button" class="load-example" on:click=load_example>
+                            {move || format!("Load the {} example", FRAMEWORKS[framework_idx.get()].name)}
+                        </button>
+                    </Show>
                     <p class="stats" role="status" aria-live="polite">
                         {move || result.get().status()}
                     </p>

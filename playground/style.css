@@ -74,6 +74,14 @@ body {
 }
 
 /* Toolbar */
+.main {
+	display: flex;
+	flex-direction: column;
+	gap: 0.75rem;
+	flex: 1;
+	min-height: 0;
+}
+
 .toolbar {
 	display: flex;
 	align-items: center;
@@ -126,6 +134,26 @@ body {
 .framework-tabs button.active {
 	background: var(--accent);
 	color: #fff;
+}
+
+.load-example {
+	padding: 0.35rem 0.9rem;
+	border: 1px solid var(--border);
+	border-radius: 4px;
+	background: var(--surface-alt);
+	color: var(--text);
+	font-size: 0.8rem;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.load-example:hover {
+	border-color: var(--accent-light);
+}
+
+.load-example:focus-visible {
+	outline: 2px solid var(--accent-light);
+	outline-offset: 2px;
 }
 
 .framework-picker {
