@@ -603,6 +603,36 @@ impl<'a> Document<'a> {
         )
     }
 
+    /// Whether the nearest enclosing `<label>` is associated with `el`. With
+    /// a `for`, only the element with that `id` is; without one, only the
+    /// label's first labelable descendant is. Unknowns (dynamic values,
+    /// spread attributes, dynamic content) count as associated.
+    pub(crate) fn is_labelled_by_ancestor(&self, el: &HtmlElement) -> bool {
+        let Some(label) = self.ancestors(el).find(|a| a.tag == Tag::Label) else {
+            return false;
+        };
+        if label.has_spread_attributes {
+            return true;
+        }
+        match label.attr(&AttributeName::For).map(|a| a.value.as_static()) {
+            Some(None) => true,
+            Some(Some(target)) => match el.attr(&AttributeName::Id).map(|a| a.value.as_static()) {
+                Some(Some(id)) => id.trim() == target.trim(),
+                Some(None) => true,
+                None => false,
+            },
+            None => {
+                label.has_dynamic_content
+                    || self
+                        .descendants(label)
+                        .into_iter()
+                        .filter(|d| d.is_labelable())
+                        .min_by_key(|d| d.index)
+                        .is_some_and(|first| first.index == el.index)
+            }
+        }
+    }
+
     /// Whether `el` is referenced by a `<label for>` in this file, or might be.
     pub(crate) fn is_label_target(&self, el: &HtmlElement) -> bool {
         match el.attr(&AttributeName::Id).map(|a| a.value.as_static()) {

@@ -829,8 +829,162 @@ fn test_misspelled_dioxus_aria_attribute() {
 }
 
 #[test]
-fn test_negative_tabindex_is_not_focusable() {
+fn test_negative_tabindex_is_out_of_tab_order() {
     let diags =
         lint_source(r#"fn A() -> Element { rsx! { div { tabindex: -1, aria_hidden: "true" } } }"#);
     assert!(!has_lint(&diags, Rule::NoAriaHiddenOnFocusable));
+}
+
+fn count(diags: &[LintDiagnostic], id: Rule) -> usize {
+    diags.iter().filter(|d| d.rule == id).count()
+}
+
+#[test]
+fn test_negative_tabindex_on_button_passes_aria_hidden() {
+    // Out of the tab order, as axe and eslint-plugin-jsx-a11y accept.
+    let ok = lint_source(
+        r#"fn c() { html! { <button tabindex="-1" aria-hidden="true">{"Save"}</button> } }"#,
+    );
+    assert!(!has_lint(&ok, Rule::NoAriaHiddenOnFocusable));
+    let d = lint_source(r#"fn c() { html! { <button aria-hidden="true">{"Save"}</button> } }"#)
+        .into_iter()
+        .find(|d| d.rule == Rule::NoAriaHiddenOnFocusable)
+        .expect("no-aria-hidden-on-focusable");
+    assert!(
+        d.help.as_deref().unwrap_or("").contains("tab order"),
+        "{:?}",
+        d.help
+    );
+}
+
+#[test]
+fn test_disabled_false_is_not_disabled() {
+    let diags = lint_source(
+        r#"fn A() -> Element { rsx! { button { disabled: false, aria_hidden: "true", "Save" } } }"#,
+    );
+    assert!(has_lint(&diags, Rule::NoAriaHiddenOnFocusable));
+    let diags = lint_source(
+        r#"fn A() -> Element { rsx! { button { disabled: true, aria_hidden: "true", "Save" } } }"#,
+    );
+    assert!(!has_lint(&diags, Rule::NoAriaHiddenOnFocusable));
+}
+
+#[test]
+fn test_multiple_false_select_is_a_combobox() {
+    let diags = lint_source(
+        r#"fn A() -> Element { rsx! { select { multiple: false, role: "combobox", aria_label: "Size" } } }"#,
+    );
+    assert!(has_lint(&diags, Rule::NoRedundantRoles));
+    let diags = lint_source(
+        r#"fn A() -> Element { rsx! { select { multiple: true, role: "listbox", aria_label: "Size" } } }"#,
+    );
+    assert!(has_lint(&diags, Rule::NoRedundantRoles));
+}
+
+#[test]
+fn test_ambiguous_text_respects_aria_labelledby() {
+    let diags = lint_source(
+        r#"fn c() { html! { <a href="/docs" aria-label="here" aria-labelledby="docs-title">{"here"}</a> } }"#,
+    );
+    assert!(!has_lint(&diags, Rule::AnchorAmbiguousText));
+    let diags = lint_source(r#"fn c() { view! { <a href="/docs" {..attrs}>"here"</a> } }"#);
+    assert!(!has_lint(&diags, Rule::AnchorAmbiguousText));
+}
+
+#[test]
+fn test_ambiguous_text_uses_descendant_names() {
+    // The image's aria-label, not its alt, names the link.
+    let ok = lint_source(
+        r#"fn c() { html! { <a href="/docs"><img src="d.png" alt="link" aria-label="Read the documentation" /></a> } }"#,
+    );
+    assert!(!has_lint(&ok, Rule::AnchorAmbiguousText));
+    let ok = lint_source(
+        r#"fn c() { html! { <a href="/docs"><span aria-labelledby="t">{"here"}</span></a> } }"#,
+    );
+    assert!(!has_lint(&ok, Rule::AnchorAmbiguousText));
+    let ok = lint_source(r#"fn c() { view! { <a href="/docs"><img {..attrs} /></a> } }"#);
+    assert!(!has_lint(&ok, Rule::AnchorAmbiguousText));
+    // Hidden content is not part of the name.
+    let bad = lint_source(
+        r#"fn c() { html! { <a href="/docs">{"here"}<span aria-hidden="true">{"(the docs)"}</span></a> } }"#,
+    );
+    assert!(has_lint(&bad, Rule::AnchorAmbiguousText));
+    let bad = lint_source(
+        r#"fn c() { html! { <a href="/docs"><span aria-label="click here">{"Docs"}</span></a> } }"#,
+    );
+    assert!(has_lint(&bad, Rule::AnchorAmbiguousText));
+}
+
+#[test]
+fn test_form_autocomplete_only_takes_on_or_off() {
+    let bad = lint_source(r#"fn c() { html! { <form autocomplete="email"></form> } }"#);
+    let d = bad
+        .iter()
+        .find(|d| d.rule == Rule::AutocompleteValid)
+        .expect("autocomplete-valid");
+    assert!(
+        d.help
+            .as_deref()
+            .unwrap_or("")
+            .contains("\"on\" or \"off\""),
+        "{:?}",
+        d.help
+    );
+    let ok = lint_source(r#"fn c() { html! { <form autocomplete="off"></form> } }"#);
+    assert!(!has_lint(&ok, Rule::AutocompleteValid));
+}
+
+#[test]
+fn test_label_for_overrides_nesting() {
+    // The label points elsewhere, so the nested input is unlabelled.
+    let bad = lint_source(
+        r#"fn c() { html! { <label for="other">{"Name"}<input id="name" /></label> } }"#,
+    );
+    assert!(has_lint(&bad, Rule::ControlHasAssociatedLabel));
+    let ok = lint_source(
+        r#"fn c() { html! { <label for="name">{"Name"}<input id="name" /></label> } }"#,
+    );
+    assert!(!has_lint(&ok, Rule::ControlHasAssociatedLabel));
+}
+
+#[test]
+fn test_label_without_for_labels_first_control_only() {
+    let diags =
+        lint_source(r#"fn c() { html! { <label>{"Name"}<input /><select></select></label> } }"#);
+    assert_eq!(count(&diags, Rule::ControlHasAssociatedLabel), 1);
+    let d = diags
+        .iter()
+        .find(|d| d.rule == Rule::ControlHasAssociatedLabel)
+        .unwrap();
+    assert!(d.message.contains("<select>"), "{}", d.message);
+}
+
+#[test]
+fn test_label_controls_are_labelable_elements() {
+    let ok = lint_source(r#"fn c() { html! { <label>{"Go"}<button>{"Go"}</button></label> } }"#);
+    assert!(!has_lint(&ok, Rule::LabelHasAssociatedControl));
+    let bad = lint_source(r#"fn c() { html! { <label>{"Name"}<input type="hidden" /></label> } }"#);
+    assert!(has_lint(&bad, Rule::LabelHasAssociatedControl));
+}
+
+#[test]
+fn test_focusable_hr_separator_needs_value() {
+    let bad = lint_source(r#"fn c() { html! { <hr role="separator" tabindex="0" /> } }"#);
+    assert!(has_lint(&bad, Rule::RoleHasRequiredAriaProps));
+    let bad = lint_source(r#"fn c() { html! { <div role="separator" tabindex="-1"></div> } }"#);
+    assert!(has_lint(&bad, Rule::RoleHasRequiredAriaProps));
+    let ok = lint_source(r#"fn c() { html! { <hr role="separator" /> } }"#);
+    assert!(!has_lint(&ok, Rule::RoleHasRequiredAriaProps));
+}
+
+#[test]
+fn test_module_role_stops_role_fallback() {
+    let diags =
+        lint_source(r#"fn c() { html! { <section role="doc-chapter heading"></section> } }"#);
+    assert!(!has_lint(&diags, Rule::RoleHasRequiredAriaProps));
+    assert!(!has_lint(&diags, Rule::AriaRole));
+    // A role-specific check would use <section>'s implicit role instead.
+    let diags =
+        lint_source(r#"fn c() { html! { <div role="doc-chapter" aria-level="2"></div> } }"#);
+    assert!(!has_lint(&diags, Rule::RoleSupportsAriaProps));
 }

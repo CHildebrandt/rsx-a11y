@@ -25,7 +25,7 @@ use std::path::Path;
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
 use syn::visit::Visit;
 
-use crate::dom::{AttributeName, Role, Tag};
+use crate::dom::{AttributeName, MODULE_ROLES, Role, Tag};
 
 /// Macro names whose bodies contain markup.
 const MARKUP_MACROS: &[&str] = &["html", "html_nested", "view", "rsx"];
@@ -105,19 +105,39 @@ impl HtmlElement {
         }
     }
 
+    /// Whether a boolean attribute such as `disabled` or `multiple` is set:
+    /// present, and not the literal `false` that frameworks use to omit it
+    /// (`disabled: false` in Dioxus, `disabled={false}` in Yew and Leptos).
+    pub fn is_set(&self, name: &AttributeName) -> bool {
+        self.attr(name).is_some_and(|a| !a.value.is("false"))
+    }
+
     /// Whether the element's `aria-hidden` is the static value `"true"`.
     pub fn is_aria_hidden(&self) -> bool {
         self.attr(&AttributeName::Aria(crate::dom::Aria::Hidden))
             .is_some_and(|a| a.value.is("true"))
     }
 
-    /// The role set with an explicit, static `role` attribute: the first
-    /// token that is a valid, non-abstract role (later tokens are fallbacks).
-    pub fn explicit_role(&self) -> Option<Role> {
+    /// The first recognized token of a static `role` attribute (later tokens
+    /// are fallbacks): `Some(Some(role))` for a WAI-ARIA role, `Some(None)`
+    /// for a DPUB-ARIA or Graphics-ARIA role, which this crate does not model.
+    fn first_recognized_role(&self) -> Option<Option<Role>> {
         self.static_attr(&AttributeName::Role)?
             .split_whitespace()
-            .filter_map(|token| token.parse::<Role>().ok())
-            .find(|role| !role.is_abstract())
+            .find_map(|token| match token.parse::<Role>() {
+                Ok(role) if role.is_abstract() => None,
+                Ok(role) => Some(Some(role)),
+                Err(_) if MODULE_ROLES.contains(&token.to_ascii_lowercase().as_str()) => Some(None),
+                Err(_) => None,
+            })
+    }
+
+    /// The role set with an explicit, static `role` attribute: the first
+    /// token that is a valid, non-abstract role (later tokens are fallbacks).
+    /// `None` if the first recognized token is a DPUB-ARIA or Graphics-ARIA
+    /// role such as `doc-chapter`.
+    pub fn explicit_role(&self) -> Option<Role> {
+        self.first_recognized_role().flatten()
     }
 
     /// The element's implicit role, taking its attributes into account
@@ -153,7 +173,7 @@ impl HtmlElement {
                     .static_attr(&AttributeName::Size)
                     .and_then(|s| s.trim().parse::<u32>().ok())
                     .is_some_and(|s| s > 1);
-                if has(AttributeName::Multiple) || size_gt_1 {
+                if self.is_set(&AttributeName::Multiple) || size_gt_1 {
                     Some(Role::ListBox)
                 } else {
                     Some(Role::Combobox)
@@ -171,9 +191,13 @@ impl HtmlElement {
     }
 
     /// The effective role: an explicit `role` attribute takes precedence,
-    /// falling back to the implicit role.
+    /// falling back to the implicit role. `None` if the element has no role,
+    /// or its explicit role is a DPUB-ARIA or Graphics-ARIA role.
     pub fn role(&self) -> Option<Role> {
-        self.explicit_role().or_else(|| self.implicit_role())
+        match self.first_recognized_role() {
+            Some(explicit) => explicit,
+            None => self.implicit_role(),
+        }
     }
 
     /// Whether the element is natively interactive, considering attributes
@@ -187,17 +211,52 @@ impl HtmlElement {
         }
     }
 
-    /// Whether the element can receive keyboard focus: an explicit
-    /// `tabindex >= 0`, or natively interactive and not disabled.
-    pub fn is_focusable(&self) -> bool {
-        if let Some(tabindex) = self.attr(&AttributeName::TabIndex) {
-            return match &tabindex.value {
-                AttrValue::Static(v) => v.trim().parse::<i32>().is_ok_and(|i| i >= 0),
-                // Dynamic value: assume it may be focusable.
-                AttrValue::Dynamic | AttrValue::Bare => true,
-            };
+    /// Whether the element is one of HTML's labelable elements, which a
+    /// `<label>` can be associated with.
+    pub fn is_labelable(&self) -> bool {
+        match self.tag {
+            Tag::Input => self.input_type().is_none_or(|t| t != "hidden"),
+            tag => matches!(
+                tag,
+                Tag::Button
+                    | Tag::Meter
+                    | Tag::Output
+                    | Tag::Progress
+                    | Tag::Select
+                    | Tag::Textarea
+            ),
         }
-        self.is_natively_interactive() && !self.has_attr(&AttributeName::Disabled)
+    }
+
+    /// The parsed `tabindex`: `None` if absent or not an integer (browsers
+    /// ignore an invalid value), `Some(None)` if dynamic.
+    fn tabindex(&self) -> Option<Option<i32>> {
+        match &self.attr(&AttributeName::TabIndex)?.value {
+            AttrValue::Static(v) => v.trim().parse().ok().map(Some),
+            AttrValue::Dynamic | AttrValue::Bare => Some(None),
+        }
+    }
+
+    fn is_natively_focusable(&self) -> bool {
+        self.is_natively_interactive() && !self.is_set(&AttributeName::Disabled)
+    }
+
+    /// Whether the element can receive focus at all, by keyboard, pointer or
+    /// script: it has a `tabindex` (including `-1`), or it is natively
+    /// interactive and not disabled. See also [`is_tabbable`](Self::is_tabbable).
+    pub fn is_focusable(&self) -> bool {
+        self.tabindex().is_some() || self.is_natively_focusable()
+    }
+
+    /// Whether the element is in the sequential (Tab key) focus order: a
+    /// `tabindex` of 0 or more, or natively interactive and not disabled
+    /// without a negative `tabindex`. A dynamic `tabindex` counts as tabbable.
+    pub fn is_tabbable(&self) -> bool {
+        match self.tabindex() {
+            Some(Some(index)) => index >= 0,
+            Some(None) => true,
+            None => self.is_natively_focusable(),
+        }
     }
 
     /// Whether there is a mouse or keyboard event handler on this element.
