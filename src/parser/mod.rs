@@ -10,9 +10,10 @@
 //!   JSX-flavoured `rsx!` macros, parsed with [`rstml`].
 //! * Dioxus RSX (`div { class: "x", "text" }`).
 //!
-//! An `html!`/`view!` macro that does not start with `<` (for example maud's
-//! `html!` or Sycamore's `view!`) is not a syntax this crate understands and is
-//! skipped rather than reported as an error.
+//! An `html!`/`view!` macro whose markup does not start with `<` after any
+//! leading text and `{…}` blocks (for example maud's `html!` or Sycamore's
+//! `view!`) is not a syntax this crate understands and is skipped rather than
+//! reported as an error.
 
 mod dioxus;
 mod jsx;
@@ -357,6 +358,7 @@ pub fn parse_source(source: &str, file_path: &str) -> Result<ParsedSource, Parse
         out: ParsedSource::default(),
     };
     visitor.visit_file(&syntax_tree);
+    sort_by_position(&mut visitor.out.elements);
 
     let (suppressions, errors) = Suppressions::parse(source, file_path);
     visitor.out.suppressions = suppressions;
@@ -450,9 +452,7 @@ impl<'ast> Visit<'ast> for MacroVisitor<'_> {
 fn process_macro(name: &str, tokens: TokenStream, file: &str, out: &mut ParsedSource) {
     if MARKUP_MACROS.contains(&name) {
         let body = strip_leading_context(tokens.clone());
-        // Yew also allows a root-level `if cond { <p/> }` in html!.
-        let yew_root_if = matches!(name, "html" | "html_nested") && starts_with_ident(&body, "if");
-        let parsed = if starts_with_lt(&body) || yew_root_if {
+        let parsed = if is_jsx_body(name, &body) {
             Some(jsx::parse(body))
         } else if name == "rsx" && !body.is_empty() {
             Some(dioxus::parse(body))
@@ -490,12 +490,39 @@ fn is_lt(tt: &TokenTree) -> bool {
     matches!(tt, TokenTree::Punct(p) if p.as_char() == '<')
 }
 
-fn starts_with_ident(tokens: &TokenStream, word: &str) -> bool {
-    matches!(tokens.clone().into_iter().next(), Some(TokenTree::Ident(i)) if i == word)
+/// Whether a macro body is JSX-style markup: after any leading text (string
+/// literals) and `{…}` blocks, it starts an element or fragment with `<`.
+/// Yew's `html!` may also start with a root-level `if cond { <p/> }`.
+/// Bodies such as maud's `html! { p { "x" } }` or Dioxus RSX do not qualify.
+fn is_jsx_body(name: &str, body: &TokenStream) -> bool {
+    let first = body.clone().into_iter().find(|t| match t {
+        TokenTree::Literal(_) => false,
+        TokenTree::Group(g) => g.delimiter() != Delimiter::Brace,
+        _ => true,
+    });
+    match first {
+        Some(t) if is_lt(&t) => true,
+        Some(TokenTree::Ident(i)) => matches!(name, "html" | "html_nested") && i == "if",
+        _ => false,
+    }
 }
 
-fn starts_with_lt(tokens: &TokenStream) -> bool {
-    tokens.clone().into_iter().next().is_some_and(|t| is_lt(&t))
+/// Renumber `elements` into source order. Nested macros are processed after
+/// their enclosing macro, so their elements would otherwise come last.
+fn sort_by_position(elements: &mut [HtmlElement]) {
+    if elements.is_sorted_by_key(|e| (e.line, e.column)) {
+        return;
+    }
+    // Stable, so elements at the same position keep their relative order.
+    elements.sort_by_key(|e| (e.line, e.column));
+    let mut new_index = vec![0; elements.len()];
+    for (i, el) in elements.iter().enumerate() {
+        new_index[el.index] = i;
+    }
+    for el in elements.iter_mut() {
+        el.index = new_index[el.index];
+        el.parent = el.parent.map(|p| new_index[p]);
+    }
 }
 
 /// Find `name!(…)` invocations of markup macros anywhere in `tokens`,

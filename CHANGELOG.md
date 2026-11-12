@@ -30,7 +30,10 @@ contain breaking changes).
 - Only `html!`/`html_nested!`/`view!`/`rsx!` bodies are parsed as markup, so
   ordinary macros such as `assert!(1 < 2)` no longer cause parse errors.
 - Negative numbers such as `tabindex: -1` are read as static values.
-- Root-level Yew `html! { if … { … } }` is linted.
+- Root-level Yew `html! { if … { … } }` is linted, including nested `if`s.
+- Markup that starts with text or a block (`view! { "Intro" <img/> }`) is
+  linted.
+- Elements from nested macros are listed in source order.
 - Misspelled `attr:aria-*` (Leptos) and `aria_*` (Dioxus) names are reported.
 - Symbolic links (to files or directories) are not followed when collecting
   files, so nothing outside the scanned directory is linted.
