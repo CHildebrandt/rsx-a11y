@@ -496,3 +496,49 @@ fn test_yew_root_if_is_parsed() {
     );
     assert_eq!(tags(&elements), [Tag::Img, Tag::P]);
 }
+
+#[test]
+fn test_markup_after_leading_text_is_parsed() {
+    let elements = parse_test(
+        r#"fn c() {
+            view! { "Intro" <img src="x.png" /> };
+            view! { {move || count.get()} " items" <p /> };
+        }"#,
+    );
+    assert_eq!(tags(&elements), [Tag::Img, Tag::P]);
+    // Leading text does not make other macro syntaxes look like markup.
+    let elements = parse_test(
+        r#"fn c() {
+            maud::html! { "Hi " strong { "there" } };
+            sycamore::view! { "Hi " (name) };
+        }"#,
+    );
+    assert!(elements.is_empty(), "{elements:?}");
+}
+
+#[test]
+fn test_nested_yew_if_blocks_are_parsed() {
+    let elements = parse_test(
+        r#"fn c() {
+            html! { if outer { if inner { <img src="x.png" /> } } };
+            html! { <div> if a { if b { <p /> } else { <span /> } } </div> };
+        }"#,
+    );
+    assert_eq!(tags(&elements), [Tag::Img, Tag::Div, Tag::P, Tag::Span]);
+    // Markup errors inside the nested branch are still reported.
+    let parsed = parse_source(r#"fn c() { html! { if a { if b { <p> } } } }"#, "test.rs").unwrap();
+    assert!(!parsed.errors.is_empty());
+}
+
+#[test]
+fn test_nested_macro_elements_are_in_source_order() {
+    let elements =
+        parse_test(r#"fn c() { html! { <div>{html! { <img src="x.png" /> }}<p /></div> } }"#);
+    assert_eq!(tags(&elements), [Tag::Div, Tag::Img, Tag::P]);
+    for (i, el) in elements.iter().enumerate() {
+        assert_eq!(el.index, i);
+    }
+    // Parents follow the renumbering; the nested macro's element has none.
+    assert_eq!(elements[1].parent, None);
+    assert_eq!(elements[2].parent, Some(0));
+}

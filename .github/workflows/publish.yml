@@ -1,55 +1,71 @@
-name: Publish to crates.io
+name: Release
 
-# Requires a CARGO_REGISTRY_TOKEN secret to be set in the repository's
-# GitHub Actions secrets (Settings → Secrets and variables → Actions).
+# Publishes to crates.io and creates a GitHub release when a version tag is
+# pushed:
+#
+#     git tag -a v0.2.0 -m "rsx-a11y 0.2.0" && git push origin v0.2.0
+#
+# The tag must match the version in Cargo.toml, and CHANGELOG.md must have a
+# "## [x.y.z]" section for it (used as the release notes).
+#
+# Requires a CARGO_REGISTRY_TOKEN secret (Settings → Secrets and variables →
+# Actions).
 
 on:
   push:
-    branches: ["main"]
-    paths: ["Cargo.toml"]
+    tags: ["v*.*.*"]
 
 concurrency:
-  group: publish
+  group: release
   cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  publish:
+  release:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write # create the GitHub release
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
 
-      - name: Check for version change
-        id: version_check
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check that the tag matches Cargo.toml
         run: |
-          if git diff HEAD^ HEAD -- Cargo.toml | grep -q '^[+-]\s*version\s*='; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "Version has not changed — skipping publish."
+          version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "rsx-a11y") | .version')
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          awk -v v="$VERSION" '
+            index($0, "## [" v "]") == 1 { found = 1; next }
+            found && index($0, "## [") == 1 { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::CHANGELOG.md has no section for $VERSION"
+            exit 1
           fi
 
-      - name: Install Rust toolchain
-        if: steps.version_check.outputs.changed == 'true'
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Cargo dependencies
-        if: steps.version_check.outputs.changed == 'true'
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run tests
-        if: steps.version_check.outputs.changed == 'true'
-        run: cargo test --verbose
+      - name: Test
+        run: cargo test -p rsx-a11y --locked
 
       - name: Publish to crates.io
-        if: steps.version_check.outputs.changed == 'true'
-        run: cargo publish --package rsx-a11y
+        run: cargo publish -p rsx-a11y --locked
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Create GitHub release
+        run: gh release create "$GITHUB_REF_NAME" --title "rsx-a11y $VERSION" --notes-file release-notes.md
+        env:
+          GH_TOKEN: ${{ github.token }}

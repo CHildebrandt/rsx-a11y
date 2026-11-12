@@ -988,3 +988,12 @@ fn test_module_role_stops_role_fallback() {
         lint_source(r#"fn c() { html! { <div role="doc-chapter" aria-level="2"></div> } }"#);
     assert!(!has_lint(&diags, Rule::RoleSupportsAriaProps));
 }
+
+#[test]
+fn test_uppercase_presentational_role_exempts_img_alt() {
+    for role in ["PRESENTATION", "None"] {
+        let src = format!(r#"fn c() {{ html! {{ <img src="x.png" role="{role}" /> }} }}"#);
+        let diags = lint_source(&src);
+        assert!(!has_lint(&diags, Rule::AltText), "{role}: {diags:?}");
+    }
+}

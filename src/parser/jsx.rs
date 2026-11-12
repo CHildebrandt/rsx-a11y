@@ -120,14 +120,16 @@ impl Converter<'_> {
         }
     }
 
-    /// A block that was not valid Rust: markup if it starts with `<`, else
-    /// something dynamic (such as Yew's `{ for items }`). Errors in the
-    /// markup are reported for the enclosing macro.
+    /// A block that was not valid Rust: markup if it starts with `<` or is a
+    /// nested `if cond { <p/> }`, else something dynamic (such as Yew's
+    /// `{ for items }`). Errors in the markup are reported for the enclosing
+    /// macro.
     fn stashed(&self, body: &TokenStream) -> MNode {
-        let starts_with_markup = matches!(
-            body.clone().into_iter().next(),
-            Some(TokenTree::Punct(p)) if p.as_char() == '<'
-        );
+        let starts_with_markup = match body.clone().into_iter().next() {
+            Some(TokenTree::Punct(p)) => p.as_char() == '<',
+            Some(TokenTree::Ident(i)) => i == "if",
+            _ => false,
+        };
         if !starts_with_markup {
             return MNode::Dynamic;
         }
