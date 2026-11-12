@@ -18,7 +18,7 @@ use crate::dom::AttributeName;
 
 /// Parse a Dioxus `rsx!` body.
 pub(crate) fn parse(tokens: TokenStream) -> (Vec<MNode>, Vec<syn::Error>) {
-    let parser = |input: ParseStream<'_>| parse_body(input, false).map(|(_, nodes)| nodes);
+    let parser = |input: ParseStream<'_>| parse_body(input, false).map(|body| body.nodes);
     match parser.parse2(tokens) {
         Ok(nodes) => (nodes, Vec::new()),
         Err(e) => (Vec::new(), vec![e]),
@@ -27,10 +27,8 @@ pub(crate) fn parse(tokens: TokenStream) -> (Vec<MNode>, Vec<syn::Error>) {
 
 /// Parse a sequence of attributes (only when `in_element`) and child nodes,
 /// optionally separated by commas, until the stream is exhausted.
-fn parse_body(
-    input: ParseStream<'_>,
-    in_element: bool,
-) -> syn::Result<(Vec<HtmlAttribute>, Vec<MNode>)> {
+fn parse_body(input: ParseStream<'_>, in_element: bool) -> syn::Result<Body> {
+    let mut has_spread = false;
     let mut attributes = Vec::new();
     let mut nodes = Vec::new();
 
@@ -60,6 +58,7 @@ fn parse_body(
         if input.peek(Token![..]) {
             input.parse::<Token![..]>()?;
             input.parse::<Expr>()?;
+            has_spread = true;
             continue;
         }
 
@@ -110,7 +109,18 @@ fn parse_body(
         return Err(input.error("unexpected token in rsx!"));
     }
 
-    Ok((attributes, nodes))
+    Ok(Body {
+        attributes,
+        has_spread,
+        nodes,
+    })
+}
+
+/// The contents of an element body (or the top level of the macro).
+struct Body {
+    attributes: Vec<HtmlAttribute>,
+    has_spread: bool,
+    nodes: Vec<MNode>,
 }
 
 /// `ident:` but not `ident::` (a path).
@@ -145,14 +155,15 @@ fn parse_element(input: ParseStream<'_>) -> syn::Result<MNode> {
     }
     let content;
     braced!(content in input);
-    let (attributes, children) = parse_body(&content, true)?;
+    let body = parse_body(&content, true)?;
     Ok(MNode::Element(MElement {
         name,
         line,
         column,
-        attributes,
-        self_closing: children.is_empty(),
-        children,
+        attributes: body.attributes,
+        has_spread: body.has_spread,
+        self_closing: body.nodes.is_empty(),
+        children: body.nodes,
     }))
 }
 
@@ -172,7 +183,7 @@ fn parse_for(input: ParseStream<'_>) -> syn::Result<MNode> {
     input.call(Expr::parse_without_eager_brace)?;
     let content;
     braced!(content in input);
-    let (_, children) = parse_body(&content, false)?;
+    let children = parse_body(&content, false)?.nodes;
     Ok(MNode::Fragment(children))
 }
 
@@ -184,7 +195,7 @@ fn parse_if(input: ParseStream<'_>) -> syn::Result<MNode> {
         input.call(Expr::parse_without_eager_brace)?;
         let content;
         braced!(content in input);
-        branches.extend(parse_body(&content, false)?.1);
+        branches.extend(parse_body(&content, false)?.nodes);
 
         if !input.peek(Token![else]) {
             break;
@@ -195,7 +206,7 @@ fn parse_if(input: ParseStream<'_>) -> syn::Result<MNode> {
         }
         let content;
         braced!(content in input);
-        branches.extend(parse_body(&content, false)?.1);
+        branches.extend(parse_body(&content, false)?.nodes);
         break;
     }
     Ok(MNode::Fragment(branches))

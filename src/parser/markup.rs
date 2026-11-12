@@ -3,8 +3,8 @@
 
 use proc_macro2::LineColumn;
 
-use super::{HtmlAttribute, HtmlElement};
-use crate::dom::Tag;
+use super::{AttrValue, HtmlAttribute, HtmlElement};
+use crate::dom::{Aria, AttributeName, Tag};
 
 /// A node in a parsed markup tree.
 #[derive(Debug, Clone)]
@@ -28,6 +28,8 @@ pub(crate) struct MElement {
     pub line: usize,
     pub column: usize,
     pub attributes: Vec<HtmlAttribute>,
+    /// Whether the element has spread attributes.
+    pub has_spread: bool,
     pub children: Vec<MNode>,
     pub self_closing: bool,
 }
@@ -72,25 +74,111 @@ pub(crate) fn position(lc: LineColumn) -> (usize, usize) {
 /// element. Components are not elements themselves, but their children are
 /// still linted.
 pub(crate) fn lower(nodes: &[MNode], file: &str, out: &mut Vec<HtmlElement>) {
+    lower_into(nodes, None, file, out);
+}
+
+fn lower_into(nodes: &[MNode], parent: Option<usize>, file: &str, out: &mut Vec<HtmlElement>) {
     for node in nodes {
         match node {
-            MNode::Element(el) => {
-                if let Ok(tag) = el.name.parse::<Tag>() {
+            MNode::Element(el) => match el.name.parse::<Tag>() {
+                Ok(tag) => {
+                    let index = out.len();
+                    let mut content = Content::default();
+                    content.collect(&el.children);
                     out.push(HtmlElement {
                         tag,
                         attributes: el.attributes.clone(),
+                        has_spread_attributes: el.has_spread,
                         is_self_closing: el.self_closing,
                         has_children: el.children.iter().any(has_content),
+                        text: content
+                            .text
+                            .split_whitespace()
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                        has_dynamic_content: content.dynamic,
+                        index,
+                        parent,
                         line: el.line,
                         column: el.column,
                         file: file.to_string(),
                     });
+                    lower_into(&el.children, Some(index), file, out);
                 }
-                lower(&el.children, file, out);
-            }
-            MNode::Fragment(children) => lower(children, file, out),
+                // A component: lint its children, which it may render
+                // anywhere, so they get no parent.
+                Err(_) => lower_into(&el.children, None, file, out),
+            },
+            MNode::Fragment(children) => lower_into(children, parent, file, out),
             MNode::Text(_) | MNode::Dynamic => {}
         }
+    }
+}
+
+/// Accumulates the static text of a subtree.
+#[derive(Default)]
+struct Content {
+    text: String,
+    dynamic: bool,
+}
+
+impl Content {
+    fn collect(&mut self, nodes: &[MNode]) {
+        for node in nodes {
+            match node {
+                MNode::Text(text) => self.push(text),
+                MNode::Dynamic => self.dynamic = true,
+                MNode::Fragment(children) => self.collect(children),
+                MNode::Element(el) => self.element(el),
+            }
+        }
+    }
+}
+
+impl Content {
+    /// A descendant element contributes its own accessible name: a hidden
+    /// element contributes nothing, `aria-labelledby` and spread attributes
+    /// make it unknown, a non-empty `aria-label` replaces its content, and an
+    /// image contributes its `alt` text.
+    fn element(&mut self, el: &MElement) {
+        let Ok(tag) = el.name.parse::<Tag>() else {
+            // A component can render anything.
+            self.dynamic = true;
+            return;
+        };
+        let attr = |name: AttributeName| el.attributes.iter().find(|a| a.name == name);
+        if attr(AttributeName::Aria(Aria::Hidden)).is_some_and(|a| a.value.is("true")) {
+            return;
+        }
+        if el.has_spread || attr(AttributeName::Aria(Aria::LabelledBy)).is_some() {
+            self.dynamic = true;
+            return;
+        }
+        match attr(AttributeName::Aria(Aria::Label)).map(|a| &a.value) {
+            Some(AttrValue::Static(label)) if !label.trim().is_empty() => {
+                self.push(label);
+                return;
+            }
+            Some(AttrValue::Static(_)) | None => {}
+            Some(_) => {
+                self.dynamic = true;
+                return;
+            }
+        }
+        if tag == Tag::Img {
+            match attr(AttributeName::Alt).map(|a| &a.value) {
+                Some(AttrValue::Static(alt)) => self.push(alt),
+                Some(_) => self.dynamic = true,
+                None => {}
+            }
+        } else {
+            self.collect(&el.children);
+        }
+    }
+
+    fn push(&mut self, text: &str) {
+        self.text.push(' ');
+        self.text.push_str(text);
     }
 }
 

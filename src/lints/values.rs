@@ -1,129 +1,193 @@
 //! Value validators shared by the lint rules.
 
-/// Validate an autocomplete attribute value per the HTML spec.
+/// Autofill field names that may be preceded by a contact token
+/// (`home`, `work`, `mobile`, `fax`, `pager`).
+const CONTACT_FIELDS: &[&str] = &[
+    "tel",
+    "tel-country-code",
+    "tel-national",
+    "tel-area-code",
+    "tel-local",
+    "tel-local-prefix",
+    "tel-local-suffix",
+    "tel-extension",
+    "email",
+    "impp",
+];
+
+/// Autofill field names that cannot take a contact token.
+const FIELDS: &[&str] = &[
+    "name",
+    "honorific-prefix",
+    "given-name",
+    "additional-name",
+    "family-name",
+    "honorific-suffix",
+    "nickname",
+    "username",
+    "new-password",
+    "current-password",
+    "one-time-code",
+    "organization-title",
+    "organization",
+    "street-address",
+    "address-line1",
+    "address-line2",
+    "address-line3",
+    "address-level4",
+    "address-level3",
+    "address-level2",
+    "address-level1",
+    "country",
+    "country-name",
+    "postal-code",
+    "cc-name",
+    "cc-given-name",
+    "cc-additional-name",
+    "cc-family-name",
+    "cc-number",
+    "cc-exp",
+    "cc-exp-month",
+    "cc-exp-year",
+    "cc-csc",
+    "cc-type",
+    "transaction-currency",
+    "transaction-amount",
+    "language",
+    "bday",
+    "bday-day",
+    "bday-month",
+    "bday-year",
+    "sex",
+    "url",
+    "photo",
+];
+
+/// Validate an `autocomplete` value against the HTML autofill grammar:
+///
+/// ```text
+/// "on" | "off"
+/// | [section-*] [shipping|billing] [home|work|mobile|fax|pager] field [webauthn]
+/// ```
+///
+/// where a contact token (`home`, `work`, …) is only allowed before
+/// telephone, email and impp fields. Tokens are ASCII case-insensitive.
 pub(super) fn is_valid_autocomplete(value: &str) -> bool {
-    const VALID_TOKENS: &[&str] = &[
-        "on",
-        "off",
-        "name",
-        "honorific-prefix",
-        "given-name",
-        "additional-name",
-        "family-name",
-        "honorific-suffix",
-        "nickname",
-        "email",
-        "username",
-        "new-password",
-        "current-password",
-        "one-time-code",
-        "organization-title",
-        "organization",
-        "street-address",
-        "address-line1",
-        "address-line2",
-        "address-line3",
-        "address-level4",
-        "address-level3",
-        "address-level2",
-        "address-level1",
-        "country",
-        "country-name",
-        "postal-code",
-        "cc-name",
-        "cc-given-name",
-        "cc-additional-name",
-        "cc-family-name",
-        "cc-number",
-        "cc-exp",
-        "cc-exp-month",
-        "cc-exp-year",
-        "cc-csc",
-        "cc-type",
-        "transaction-currency",
-        "transaction-amount",
-        "language",
-        "bday",
-        "bday-day",
-        "bday-month",
-        "bday-year",
-        "sex",
-        "tel",
-        "tel-country-code",
-        "tel-national",
-        "tel-area-code",
-        "tel-local",
-        "tel-extension",
-        "impp",
-        "url",
-        "photo",
-        "webauthn",
-    ];
-    const SECTION_PREFIXES: &[&str] = &["shipping", "billing"];
+    let lower = value.to_ascii_lowercase();
+    let mut tokens: Vec<&str> = lower.split_whitespace().collect();
 
-    let tokens: Vec<&str> = value.split_whitespace().collect();
-    if tokens.is_empty() {
-        return false;
+    match tokens.as_slice() {
+        [] => return false,
+        ["on" | "off"] => return true,
+        _ => {}
     }
 
-    let mut idx = 0;
-
-    // Optional section-* prefix
-    if tokens.get(idx).is_some_and(|t| t.starts_with("section-")) {
-        idx += 1;
+    if tokens.last() == Some(&"webauthn") {
+        tokens.pop();
     }
 
-    // Optional shipping/billing
-    if tokens
-        .get(idx)
-        .is_some_and(|t| SECTION_PREFIXES.contains(t))
+    let mut rest = tokens.as_slice();
+    if let [first, tail @ ..] = rest
+        && first
+            .strip_prefix("section-")
+            .is_some_and(|s| !s.is_empty())
     {
-        idx += 1;
+        rest = tail;
     }
-
-    // Must have at least the field token
-    if idx >= tokens.len() {
-        return false;
+    if let [first, tail @ ..] = rest
+        && matches!(*first, "shipping" | "billing")
+    {
+        rest = tail;
     }
-
-    // Remaining token must be a valid field name
-    let field = tokens[idx];
-    idx += 1;
-
-    // Must be the last token
-    if idx != tokens.len() {
-        return false;
+    match rest {
+        [field] => FIELDS.contains(field) || CONTACT_FIELDS.contains(field),
+        [contact, field] => {
+            matches!(*contact, "home" | "work" | "mobile" | "fax" | "pager")
+                && CONTACT_FIELDS.contains(field)
+        }
+        _ => false,
     }
-
-    VALID_TOKENS.contains(&field)
 }
 
-/// Validate a BCP 47 language tag (simplified check per jsx-a11y lang rule).
+/// Validate a BCP 47 language tag (a structural check, not a registry lookup).
+///
+/// Accepts a 2–3 letter (or 5–8 letter) primary language subtag followed by
+/// alphanumeric subtags of 1–8 characters, plus private-use (`x-…`) and
+/// grandfathered `i-…` tags.
 pub(super) fn is_valid_lang(lang: &str) -> bool {
     let lang = lang.trim();
-    if lang.is_empty() {
+    let mut parts = lang.split('-');
+    let Some(primary) = parts.next() else {
+        return false;
+    };
+    let primary_ok = match primary.len() {
+        1 => primary.eq_ignore_ascii_case("x") || primary.eq_ignore_ascii_case("i"),
+        2 | 3 | 5..=8 => true,
+        _ => false,
+    } && primary.chars().all(|c| c.is_ascii_alphabetic());
+    if !primary_ok {
         return false;
     }
-
-    let parts: Vec<&str> = lang.split('-').collect();
-    let primary = parts[0];
-
-    // Primary language subtag must be 2-3 ASCII letters
-    if primary.len() < 2 || primary.len() > 3 {
+    let rest: Vec<&str> = parts.collect();
+    if primary.len() == 1 && rest.is_empty() {
         return false;
     }
-    if !primary.chars().all(|c| c.is_ascii_alphabetic()) {
-        return false;
-    }
+    rest.iter().all(|part| {
+        (1..=8).contains(&part.len()) && part.chars().all(|c| c.is_ascii_alphanumeric())
+    })
+}
 
-    // All remaining subtags must be non-empty and alphanumeric
-    for part in &parts[1..] {
-        if part.is_empty() || part.len() > 8 {
-            return false;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn autocomplete_grammar() {
+        for valid in [
+            "on",
+            "off",
+            "email",
+            "work email",
+            "home tel",
+            "section-blue shipping postal-code",
+            "billing cc-number",
+            "shipping mobile tel",
+            "username webauthn",
+            "Current-Password",
+        ] {
+            assert!(is_valid_autocomplete(valid), "{valid:?} should be valid");
         }
-        if !part.chars().all(|c| c.is_ascii_alphanumeric()) {
-            return false;
+        for invalid in [
+            "",
+            "banana",
+            "on off",
+            "work name",
+            "email work",
+            "section- email",
+            "shipping billing email",
+            "webauthn",
+        ] {
+            assert!(
+                !is_valid_autocomplete(invalid),
+                "{invalid:?} should be invalid"
+            );
         }
     }
-    true
+
+    #[test]
+    fn lang_tags() {
+        for valid in [
+            "en",
+            "en-US",
+            "zh-Hans-CN",
+            "sgn-BE-FR",
+            "x-klingon",
+            "es-419",
+        ] {
+            assert!(is_valid_lang(valid), "{valid:?} should be valid");
+        }
+        for invalid in ["", "e", "123", "en-", "en_US", "toolongprimary", "x"] {
+            assert!(!is_valid_lang(invalid), "{invalid:?} should be invalid");
+        }
+    }
 }

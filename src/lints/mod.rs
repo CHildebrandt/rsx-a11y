@@ -9,7 +9,9 @@ mod rules;
 mod tests;
 mod values;
 
-use crate::dom::{Tag, serde_via_str};
+use std::collections::{HashMap, HashSet};
+
+use crate::dom::{AttributeName, Tag, serde_via_str};
 use crate::parser::{HtmlAttribute, HtmlElement};
 use strum::IntoEnumIterator;
 
@@ -480,11 +482,13 @@ impl Rule {
         }
     }
 
-    /// Run this rule against a single element, appending any diagnostics to `out`.
-    pub fn check(self, element: &HtmlElement, out: &mut Vec<LintDiagnostic>) {
+    /// Run this rule against one element of `doc`, appending any
+    /// diagnostics to `out`.
+    fn check(self, element: &HtmlElement, doc: &Document<'_>, out: &mut Vec<LintDiagnostic>) {
         let mut cx = Emitter {
             rule: self,
             element,
+            doc,
             out,
         };
         rules::check(self, element, &mut cx);
@@ -512,23 +516,140 @@ pub struct LintDiagnostic {
     pub help: Option<String>,
 }
 
-/// Run all lint rules on a collection of parsed HTML elements.
+/// Run all lint rules on the elements of one file (as returned by
+/// [`parse_source`](crate::parser::parse_source)).
 ///
-/// Diagnostics are returned in element order, then rule order.
+/// Diagnostics are returned in element order, then rule order. Some rules
+/// look at related elements (a `<label for>` elsewhere in the file, a
+/// `<track>` child), so pass all of a file's elements together.
 pub fn run_all_lints(elements: &[HtmlElement]) -> impl Iterator<Item = LintDiagnostic> + '_ {
-    elements.iter().flat_map(|element| {
+    run_lints(elements, Rule::iter())
+}
+
+/// Run the given rules on the elements of one file.
+pub fn run_lints(
+    elements: &[HtmlElement],
+    rules: impl IntoIterator<Item = Rule>,
+) -> impl Iterator<Item = LintDiagnostic> + '_ {
+    let rules: Vec<Rule> = rules.into_iter().collect();
+    let doc = Document::new(elements);
+    let mut out = Vec::new();
+    for element in elements {
+        for &rule in &rules {
+            rule.check(element, &doc, &mut out);
+        }
+    }
+    out.into_iter()
+}
+
+/// Relationships between the elements of one file.
+pub(crate) struct Document<'a> {
+    by_index: HashMap<usize, &'a HtmlElement>,
+    children: HashMap<usize, Vec<&'a HtmlElement>>,
+    /// Static `for` values of `<label>` elements.
+    label_targets: HashSet<&'a str>,
+    /// Whether some `<label>` has a dynamic `for`, which could target anything.
+    has_dynamic_label_target: bool,
+}
+
+impl<'a> Document<'a> {
+    fn new(elements: &'a [HtmlElement]) -> Self {
+        let mut doc = Document {
+            by_index: HashMap::new(),
+            children: HashMap::new(),
+            label_targets: HashSet::new(),
+            has_dynamic_label_target: false,
+        };
+        for el in elements {
+            doc.by_index.insert(el.index, el);
+            if let Some(parent) = el.parent {
+                doc.children.entry(parent).or_default().push(el);
+            }
+            if el.tag == Tag::Label
+                && let Some(attr) = el.attr(&AttributeName::For)
+            {
+                match attr.value.as_static() {
+                    Some(id) => {
+                        doc.label_targets.insert(id.trim());
+                    }
+                    None => doc.has_dynamic_label_target = true,
+                }
+            }
+        }
+        doc
+    }
+
+    /// Direct child elements of `el`.
+    pub(crate) fn children(&self, el: &HtmlElement) -> &[&'a HtmlElement] {
+        self.children.get(&el.index).map_or(&[], Vec::as_slice)
+    }
+
+    /// All descendant elements of `el`.
+    pub(crate) fn descendants(&self, el: &HtmlElement) -> Vec<&'a HtmlElement> {
         let mut out = Vec::new();
-        for rule in Rule::iter() {
-            rule.check(element, &mut out);
+        let mut stack: Vec<&HtmlElement> = self.children(el).to_vec();
+        while let Some(next) = stack.pop() {
+            out.push(next);
+            stack.extend(self.children(next));
         }
         out
-    })
+    }
+
+    /// Enclosing elements of `el`, nearest first.
+    pub(crate) fn ancestors(&self, el: &HtmlElement) -> impl Iterator<Item = &'a HtmlElement> {
+        std::iter::successors(
+            el.parent.and_then(|p| self.by_index.get(&p).copied()),
+            |e| e.parent.and_then(|p| self.by_index.get(&p).copied()),
+        )
+    }
+
+    /// Whether the nearest enclosing `<label>` is associated with `el`. With
+    /// a `for`, only the element with that `id` is; without one, only the
+    /// label's first labelable descendant is. Unknowns (dynamic values,
+    /// spread attributes, dynamic content) count as associated.
+    pub(crate) fn is_labelled_by_ancestor(&self, el: &HtmlElement) -> bool {
+        let Some(label) = self.ancestors(el).find(|a| a.tag == Tag::Label) else {
+            return false;
+        };
+        if label.has_spread_attributes {
+            return true;
+        }
+        match label.attr(&AttributeName::For).map(|a| a.value.as_static()) {
+            Some(None) => true,
+            Some(Some(target)) => match el.attr(&AttributeName::Id).map(|a| a.value.as_static()) {
+                Some(Some(id)) => id.trim() == target.trim(),
+                Some(None) => true,
+                None => false,
+            },
+            None => {
+                label.has_dynamic_content
+                    || self
+                        .descendants(label)
+                        .into_iter()
+                        .filter(|d| d.is_labelable())
+                        .min_by_key(|d| d.index)
+                        .is_some_and(|first| first.index == el.index)
+            }
+        }
+    }
+
+    /// Whether `el` is referenced by a `<label for>` in this file, or might be.
+    pub(crate) fn is_label_target(&self, el: &HtmlElement) -> bool {
+        match el.attr(&AttributeName::Id).map(|a| a.value.as_static()) {
+            None => false,
+            Some(None) => true, // dynamic id
+            Some(Some(id)) => {
+                self.has_dynamic_label_target || self.label_targets.contains(id.trim())
+            }
+        }
+    }
 }
 
 /// Builds diagnostics for one rule on one element.
 pub(crate) struct Emitter<'a> {
     rule: Rule,
     element: &'a HtmlElement,
+    pub(crate) doc: &'a Document<'a>,
     out: &'a mut Vec<LintDiagnostic>,
 }
 

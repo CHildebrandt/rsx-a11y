@@ -241,3 +241,29 @@ fn test_check_project_filter_by_rule() {
         "Expected alt-text diagnostics in fixtures"
     );
 }
+
+// --- Known-good fixture ---
+
+#[test]
+fn test_accessible_fixture_has_no_diagnostics() {
+    let diags = lint_fixture("accessible_components.rs");
+    let found: Vec<String> = diags
+        .iter()
+        .map(|d| format!("{}:{} [{}] {}", d.line, d.column, d.rule, d.message))
+        .collect();
+    assert!(found.is_empty(), "false positives:\n{}", found.join("\n"));
+}
+
+#[test]
+fn test_accessible_fixture_is_actually_parsed() {
+    let path = "tests/fixtures/accessible_components.rs";
+    let source = std::fs::read_to_string(path).unwrap();
+    let parsed = parser::parse_source(&source, path).unwrap();
+    assert!(parsed.errors.is_empty(), "{:?}", parsed.errors);
+    // Guard against the fixture silently passing because nothing was found.
+    assert!(
+        parsed.elements.len() > 40,
+        "only {} elements",
+        parsed.elements.len()
+    );
+}
