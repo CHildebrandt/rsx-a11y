@@ -158,7 +158,7 @@ Options:
       "line": 13, "column": 13, "element": "img", "help": "…" }
   ],
   "parse_errors": [ { "kind": "markup", "file": "src/broken.rs", "message": "…" } ],
-  "summary": { "files_scanned": 3, "files_checked": 3, "errors": 1, "warnings": 2, "infos": 0, "parse_errors": 1 }
+  "summary": { "files_scanned": 3, "files_checked": 3, "errors": 1, "warnings": 2, "infos": 0, "parse_errors": 1, "files_with_parse_errors": 1 }
 }
 ```
 
@@ -182,6 +182,27 @@ rsx-a11y --format json src/ > report.json
 # Write output to a file
 rsx-a11y --out-file report.txt src/
 ```
+
+## Ignoring Diagnostics
+
+Silence a diagnostic with a comment on the line before the element (or at the end of the same line). Name the rules to ignore and, optionally, give a reason after `--`:
+
+```rust
+html! {
+    // rsx-a11y-ignore: alt-text -- the alt text is set by the CSS sprite
+    <img src="sprite.png" />
+
+    <input autofocus /> // rsx-a11y-ignore: no-autofocus
+}
+```
+
+| Comment | Effect |
+|---------|--------|
+| `// rsx-a11y-ignore` | Ignore every rule on the next line of code |
+| `// rsx-a11y-ignore: rule-a, rule-b` | Ignore only the listed rules |
+| `// rsx-a11y-ignore-file: rule-a` | Ignore the listed rules (or all, without a list) in the whole file |
+
+A comment covers diagnostics on its target line and on any element that starts there, so attributes spread over several lines are covered too. Unknown rule names in an ignore comment are reported as errors, so a typo can't hide anything.
 
 ## How It Works
 

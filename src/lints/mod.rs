@@ -12,7 +12,7 @@ mod values;
 use std::collections::{HashMap, HashSet};
 
 use crate::dom::{AttributeName, Tag, serde_via_str};
-use crate::parser::{HtmlAttribute, HtmlElement};
+use crate::parser::{HtmlAttribute, HtmlElement, ParsedSource};
 use strum::IntoEnumIterator;
 
 /// Severity level for a lint diagnostic.
@@ -540,6 +540,32 @@ pub fn run_lints(
         }
     }
     out.into_iter()
+}
+
+/// Lint a parsed file with the given rules, honoring its
+/// `// rsx-a11y-ignore` comments.
+///
+/// A diagnostic is suppressed by a directive on its own line or on the line
+/// where its element starts.
+pub fn lint_parsed(
+    parsed: &ParsedSource,
+    rules: impl IntoIterator<Item = Rule>,
+) -> Vec<LintDiagnostic> {
+    let rules: Vec<Rule> = rules.into_iter().collect();
+    let doc = Document::new(&parsed.elements);
+    let mut out = Vec::new();
+    let mut element_diags = Vec::new();
+    for element in &parsed.elements {
+        for &rule in &rules {
+            rule.check(element, &doc, &mut element_diags);
+        }
+        out.extend(element_diags.drain(..).filter(|d| {
+            !parsed
+                .suppressions
+                .is_suppressed(d.rule, &[d.line, element.line])
+        }));
+    }
+    out
 }
 
 /// Relationships between the elements of one file.

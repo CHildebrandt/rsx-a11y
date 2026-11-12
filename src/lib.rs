@@ -33,6 +33,7 @@ pub mod dom;
 pub mod lints;
 pub mod parser;
 pub mod prelude;
+pub mod suppress;
 
 use std::fmt;
 use std::io;
@@ -163,10 +164,10 @@ impl fmt::Display for LintSummary {
 /// macro in it could not be parsed.
 pub fn check_source(source: &str, file_name: &str) -> Result<Vec<LintDiagnostic>, ParseError> {
     let parsed = parser::parse_source(source, file_name)?;
-    if let Some(error) = parsed.errors.into_iter().next() {
+    if let Some(error) = parsed.errors.first().cloned() {
         return Err(error);
     }
-    let mut diagnostics: Vec<_> = lints::run_all_lints(&parsed.elements).collect();
+    let mut diagnostics = lints::lint_parsed(&parsed, Rule::all());
     sort_diagnostics(&mut diagnostics);
     Ok(diagnostics)
 }
@@ -209,7 +210,9 @@ pub fn check_files(files: &[PathBuf], options: &LintOptions) -> LintSummary {
             Err(e) => (None, vec![e]),
             Ok(parsed) if parsed.elements.is_empty() => (None, parsed.errors),
             Ok(parsed) => {
-                let diagnostics = lints::run_all_lints(&parsed.elements)
+                let enabled = Rule::all().filter(|r| options.is_enabled(*r));
+                let diagnostics = lints::lint_parsed(&parsed, enabled)
+                    .into_iter()
                     .filter(|d| options.keep(d))
                     .collect();
                 (Some(diagnostics), parsed.errors)

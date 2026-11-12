@@ -178,6 +178,7 @@ fn write_pretty(report: &Report<'_>, color: bool, w: &mut dyn Write) -> io::Resu
             ParseErrorKind::Markup => {
                 "this macro was not linted (or only partly); other macros in the file were."
             }
+            ParseErrorKind::Directive => "the comment was ignored; the file was still linted.",
         };
         writeln!(w, "  {} {}", p.paint("note:", Style::Help), note)?;
         writeln!(w)?;

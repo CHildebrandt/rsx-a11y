@@ -26,6 +26,7 @@ use proc_macro2::{Delimiter, TokenStream, TokenTree};
 use syn::visit::Visit;
 
 use crate::dom::{AttributeName, MODULE_ROLES, Role, Tag};
+use crate::suppress::Suppressions;
 
 /// Macro names whose bodies contain markup.
 const MARKUP_MACROS: &[&str] = &["html", "html_nested", "view", "rsx"];
@@ -313,9 +314,12 @@ impl AttrValue {
 pub struct ParsedSource {
     /// Every HTML element found, in source order.
     pub elements: Vec<HtmlElement>,
-    /// Markup macros that could not be parsed. Elements in these macros are
-    /// missing from `elements`, so the file was only partially linted.
+    /// Markup macros that could not be parsed (elements in them are missing
+    /// from `elements`, so the file was only partially linted), and malformed
+    /// `rsx-a11y-ignore` comments.
     pub errors: Vec<ParseError>,
+    /// `// rsx-a11y-ignore` directives found in the file.
+    pub suppressions: Suppressions,
 }
 
 /// Normalize a path to use forward slashes consistently.
@@ -353,6 +357,10 @@ pub fn parse_source(source: &str, file_path: &str) -> Result<ParsedSource, Parse
         out: ParsedSource::default(),
     };
     visitor.visit_file(&syntax_tree);
+
+    let (suppressions, errors) = Suppressions::parse(source, file_path);
+    visitor.out.suppressions = suppressions;
+    visitor.out.errors.extend(errors);
     Ok(visitor.out)
 }
 
@@ -366,6 +374,8 @@ pub enum ParseErrorKind {
     Rust,
     /// Markup inside a supported macro could not be parsed.
     Markup,
+    /// An `rsx-a11y-ignore` comment is malformed (e.g. names an unknown rule).
+    Directive,
 }
 
 /// A file, or a macro within it, that could not be read or parsed.
@@ -406,6 +416,7 @@ impl std::fmt::Display for ParseError {
             ParseErrorKind::Io => "Failed to read",
             ParseErrorKind::Rust => "Failed to parse",
             ParseErrorKind::Markup => "Invalid markup in",
+            ParseErrorKind::Directive => "Invalid ignore comment in",
         };
         match self.line {
             Some(line) => write!(f, "{} {}:{}: {}", what, self.file, line, self.message),
