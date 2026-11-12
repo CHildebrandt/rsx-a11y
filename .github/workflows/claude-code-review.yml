@@ -1,8 +1,13 @@
 name: Claude Code Review
 
 # Reviews every pull request with Claude and posts findings as inline
-# comments. Needs the Claude GitHub App installed on the repository and a
-# CLAUDE_CODE_OAUTH_TOKEN secret (from `claude setup-token`).
+# comments. Needs the Claude GitHub App installed on the repository.
+#
+# Authenticates with workload identity federation: the action exchanges this
+# run's GitHub OIDC token (hence `id-token: write`) for short-lived Claude API
+# access through a Claude Console service account, so no API key is stored.
+# The IDs below are identifiers, not credentials; access is granted by the
+# federation rule's claim conditions in the Console.
 # See https://code.claude.com/docs/en/github-actions
 
 on:
@@ -15,7 +20,7 @@ concurrency:
 
 jobs:
   review:
-    # Secrets are not available to pull requests from forks or Dependabot.
+    # Pull requests from forks and Dependabot get no OIDC token or secrets.
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.actor != 'dependabot[bot]'
@@ -33,7 +38,10 @@ jobs:
 
       - uses: anthropics/claude-code-action@v1
         with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic_federation_rule_id: fdrl_01J7ZwSQVBZU3mCbRPJ5oJi6
+          anthropic_organization_id: a7852d17-e0b9-47f7-ac0a-414451516a38
+          anthropic_service_account_id: svac_01SKhkRZ6NEPJ2PFy68Q7CLA
+          anthropic_workspace_id: wrkspc_01GVWvpiFvzvVcHWpUXs6hjk
           plugin_marketplaces: "https://github.com/anthropics/claude-plugins-official.git"
           plugins: "code-review@claude-plugins-official"
           prompt: "/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}"
