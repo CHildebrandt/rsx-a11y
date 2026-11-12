@@ -74,6 +74,14 @@ body {
 }
 
 /* Toolbar */
+.main {
+	display: flex;
+	flex-direction: column;
+	gap: 0.75rem;
+	flex: 1;
+	min-height: 0;
+}
+
 .toolbar {
 	display: flex;
 	align-items: center;
@@ -118,13 +126,49 @@ body {
 	background: var(--surface-alt);
 }
 
+.framework-tabs button:focus-visible {
+	outline: 2px solid var(--accent-light);
+	outline-offset: 2px;
+}
+
 .framework-tabs button.active {
 	background: var(--accent);
 	color: #fff;
 }
 
+.load-example {
+	padding: 0.35rem 0.9rem;
+	border: 1px solid var(--border);
+	border-radius: 4px;
+	background: var(--surface-alt);
+	color: var(--text);
+	font-size: 0.8rem;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.load-example:hover {
+	border-color: var(--accent-light);
+}
+
+.load-example:focus-visible {
+	outline: 2px solid var(--accent-light);
+	outline-offset: 2px;
+}
+
+.framework-picker {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+
+.toolbar-label {
+	font-size: 0.8rem;
+	color: var(--text-muted);
+}
+
 .stats {
-	margin-left: auto;
+	margin: 0 0 0 auto;
 	font-size: 0.8rem;
 	color: var(--text-muted);
 	font-family: var(--font-mono);
@@ -150,6 +194,7 @@ body {
 }
 
 .panel-header {
+	margin: 0;
 	padding: 0.5rem 1rem;
 	font-size: 0.75rem;
 	font-weight: 600;
@@ -171,8 +216,13 @@ body {
 	font-size: 0.85rem;
 	line-height: 1.6;
 	resize: none;
-	outline: none;
 	tab-size: 4;
+}
+
+/* The textarea fills its panel, so draw the focus ring inside it. */
+.code-editor:focus-visible {
+	outline: 2px solid var(--accent-light);
+	outline-offset: -2px;
 }
 
 .code-editor::placeholder {
@@ -208,6 +258,9 @@ body {
 }
 
 .diagnostics-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
 	display: flex;
 	flex-direction: column;
 	gap: 0.5rem;
@@ -346,5 +399,56 @@ body {
 
 	.stats {
 		margin-left: 0;
+	}
+}
+
+.panel-header label {
+	cursor: inherit;
+}
+
+.diagnostic p {
+	margin: 0;
+}
+
+.no-issues {
+	margin: 0;
+}
+
+/* Hidden visually but still read by screen readers. */
+.visually-hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
+}
+
+.skip-link {
+	position: absolute;
+	left: 1rem;
+	top: -3rem;
+	padding: 0.5rem 1rem;
+	background: var(--accent);
+	color: #fff;
+	border-radius: var(--radius);
+	z-index: 10;
+}
+
+.skip-link:focus {
+	top: 1rem;
+}
+
+a:focus-visible {
+	outline: 2px solid var(--accent-light);
+	outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	* {
+		transition: none !important;
 	}
 }
