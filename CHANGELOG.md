@@ -5,7 +5,7 @@ on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 follows [Semantic Versioning](https://semver.org/) (pre-1.0: minor versions may
 contain breaking changes).
 
-## [0.2.0] - Unreleased
+## [0.2.0] - 2026-11-12
 
 ### Fixed
 
@@ -87,6 +87,7 @@ contain breaking changes).
   and `interactive-supports-focus` use. Also new: `is_set` and `is_labelable`.
 - `rayon` is behind a new `parallel` feature (enabled by `cli`); the unused
   `quote` and `walkdir` dependencies were removed.
+- Updated to `syn` 3 and `rstml` 0.13.
 - Minimum supported Rust version: 1.88.
 
 ## [0.1.4] - 2026-02-28
