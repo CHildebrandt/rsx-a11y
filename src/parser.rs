@@ -22,7 +22,7 @@ pub struct HtmlElement {
     pub has_children: bool,
     /// Line number in the source file (1-based).
     pub line: usize,
-    /// Column number in the source file (0-based).
+    /// Column number in the source file (1-based).
     pub column: usize,
     /// The source file path.
     pub file: String,
@@ -84,7 +84,7 @@ pub struct HtmlAttribute {
     pub value: Option<AttrValue>,
     /// Line number in the source file (1-based).
     pub line: usize,
-    /// Column number in the source file (0-based).
+    /// Column number in the source file (1-based).
     pub column: usize,
 }
 
@@ -113,12 +113,10 @@ fn normalize_path(path: &Path) -> String {
 }
 
 /// Parse a Rust source file and extract all HTML elements from supported macros.
-///
-/// Performs a cheap pre-filter before doing the expensive `syn` parse.
 pub fn parse_file(path: &Path) -> Result<Vec<HtmlElement>, ParseError> {
     let file_path = normalize_path(path);
     let source = std::fs::read_to_string(path)
-        .map_err(|e| ParseError::IoError(file_path.clone(), e.to_string()))?;
+        .map_err(|e| ParseError::new(ParseErrorKind::Io, &file_path, e.to_string()))?;
 
     parse_source(&source, &file_path)
 }
@@ -126,7 +124,7 @@ pub fn parse_file(path: &Path) -> Result<Vec<HtmlElement>, ParseError> {
 /// Parse Rust source code and extract HTML elements from supported macros.
 pub fn parse_source(source: &str, file_path: &str) -> Result<Vec<HtmlElement>, ParseError> {
     let syntax_tree = syn::parse_file(source)
-        .map_err(|e| ParseError::SynError(file_path.to_string(), e.to_string()))?;
+        .map_err(|e| ParseError::new(ParseErrorKind::Rust, file_path, e.to_string()))?;
 
     let mut visitor = MacroVisitor {
         elements: Vec::new(),
@@ -136,10 +134,12 @@ pub fn parse_source(source: &str, file_path: &str) -> Result<Vec<HtmlElement>, P
 
     visitor.visit_file(&syntax_tree);
 
-    // If no elements were found but rstml reported errors, surface them.
-    if visitor.elements.is_empty() && !visitor.rstml_errors.is_empty() {
-        return Err(ParseError::RstmlError(
-            file_path.to_string(),
+    // Any markup macro that failed to parse means part of the file was not
+    // linted, even if other macros in the file produced elements.
+    if !visitor.rstml_errors.is_empty() {
+        return Err(ParseError::new(
+            ParseErrorKind::Markup,
+            file_path,
             visitor.rstml_errors.join("; "),
         ));
     }
@@ -147,26 +147,54 @@ pub fn parse_source(source: &str, file_path: &str) -> Result<Vec<HtmlElement>, P
     Ok(visitor.elements)
 }
 
-/// Errors that can occur during parsing.
-#[derive(Debug, Clone, serde::Serialize)]
-pub enum ParseError {
-    IoError(String, String),
-    SynError(String, String),
-    /// RSX/HTML content inside a macro could not be parsed.
-    RstmlError(String, String),
+/// What kind of failure a [`ParseError`] represents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ParseErrorKind {
+    /// The file could not be read from disk.
+    Io,
+    /// The file is not valid Rust.
+    Rust,
+    /// Markup inside a supported macro could not be parsed.
+    Markup,
+}
+
+/// A file (or a macro within it) that could not be read or parsed.
+///
+/// Files with parse errors were **not** linted, so callers should treat them
+/// as failures rather than as clean results.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ParseError {
+    /// What went wrong.
+    pub kind: ParseErrorKind,
+    /// The file the error occurred in.
+    pub file: String,
+    /// Human-readable description of the error.
+    pub message: String,
+}
+
+impl ParseError {
+    pub(crate) fn new(kind: ParseErrorKind, file: &str, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            file: file.to_string(),
+            message: message.into(),
+        }
+    }
 }
 
 impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ParseError::IoError(path, err) => write!(f, "Failed to read {}: {}", path, err),
-            ParseError::SynError(path, err) => write!(f, "Failed to parse {}: {}", path, err),
-            ParseError::RstmlError(path, err) => {
-                write!(f, "Invalid RSX in {}: {}", path, err)
-            }
-        }
+        let what = match self.kind {
+            ParseErrorKind::Io => "Failed to read",
+            ParseErrorKind::Rust => "Failed to parse",
+            ParseErrorKind::Markup => "Invalid markup in",
+        };
+        write!(f, "{} {}: {}", what, self.file, self.message)
     }
 }
+
+impl std::error::Error for ParseError {}
 
 /// AST visitor that finds macro invocations.
 struct MacroVisitor {
@@ -176,8 +204,32 @@ struct MacroVisitor {
     rstml_errors: Vec<String>,
 }
 
+/// Macro names whose bodies contain markup (matched on the last path
+/// segment, so `leptos::view!` counts).
+const MARKUP_MACROS: &[&str] = &["html", "html_nested", "view", "rsx"];
+
+/// Whether `mac` is a markup macro with JSX-style content we can parse.
+/// Other macros (`assert!`, `vec!`, maud's `html! { p { … } }`) are skipped
+/// rather than being fed to rstml, which would reject them.
+fn is_jsx_markup_macro(mac: &syn::Macro) -> bool {
+    let is_markup_name = mac
+        .path
+        .segments
+        .last()
+        .is_some_and(|s| MARKUP_MACROS.contains(&s.ident.to_string().as_str()));
+    let starts_with_tag = matches!(
+        mac.tokens.clone().into_iter().next(),
+        Some(proc_macro2::TokenTree::Punct(p)) if p.as_char() == '<'
+    );
+    is_markup_name && starts_with_tag
+}
+
 impl<'ast> Visit<'ast> for MacroVisitor {
     fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        if !is_jsx_markup_macro(mac) {
+            syn::visit::visit_macro(self, mac);
+            return;
+        }
         match rstml::parse2(mac.tokens.clone()) {
             Ok(nodes) => {
                 let mut elements = Vec::new();
@@ -221,14 +273,14 @@ fn collect_elements_from_nodes(acc: &mut Vec<HtmlElement>, nodes: &[Node], file_
                                             .unwrap_or(AttrValue::Dynamic),
                                     ),
                                     line: line_column.line,
-                                    column: line_column.column,
+                                    column: line_column.column + 1,
                                 }
                             })
                             .collect(),
                         is_self_closing: node_element.close_tag.is_none(),
                         has_children: !node_element.children.is_empty(),
                         line: line_column.line,
-                        column: line_column.column,
+                        column: line_column.column + 1,
                         file: file_path.to_string(),
                     };
                     acc.push(element);
@@ -462,5 +514,38 @@ mod tests {
             "expected Dynamic, got {:?}",
             attr.value
         );
+    }
+
+    #[test]
+    fn test_non_markup_macros_are_ignored() {
+        // `1 < 2` is not markup; rstml would reject it.
+        let elements = parse_test(
+            r#"
+            fn t() {
+                assert!(1 < 2);
+                let v = vec![1, 2, 3];
+                println!("{v:?}");
+                maud::html! { p { "Hi" } };
+            }
+        "#,
+        );
+        assert!(elements.is_empty());
+    }
+
+    #[test]
+    fn test_qualified_markup_macro_is_parsed() {
+        let elements = parse_test(r#"fn c() { leptos::view! { <img src="x.png" /> } }"#);
+        assert!(elements.iter().any(|e| e.tag == Tag::Img));
+    }
+
+    #[test]
+    fn test_markup_error_reported_even_when_other_macros_parse() {
+        let err = parse_source(
+            "fn a() { html! { <div></div> } }
+fn b() { html! { <span> } }",
+            "t.rs",
+        )
+        .unwrap_err();
+        assert_eq!(err.kind, ParseErrorKind::Markup);
     }
 }
