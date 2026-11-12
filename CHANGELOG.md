@@ -34,6 +34,20 @@ contain breaking changes).
 - Misspelled `attr:aria-*` (Leptos) and `aria_*` (Dioxus) names are reported.
 - Symbolic links (to files or directories) are not followed when collecting
   files, so nothing outside the scanned directory is linted.
+- Accessible names follow the ARIA precedence: `aria-labelledby` over
+  `aria-label` over content, and a link's descendants contribute their own
+  name (`aria-label` over `alt`; `aria-hidden` content contributes nothing).
+- A `<label>` only labels the control its `for` names, or else its first
+  labelable descendant; buttons count as labelable, hidden inputs don't.
+- `<form autocomplete>` only accepts `on` or `off`.
+- A focusable `<hr role="separator">` must have `aria-valuenow`.
+- A DPUB/Graphics role such as `doc-chapter` stops role fallback, so
+  `role="doc-chapter heading"` is not checked as a heading.
+- `disabled: false` and `multiple: false` (Dioxus, or `={false}`) count as
+  unset.
+- Ignore comments are found with a lexer: `//` inside strings no longer hides
+  a directive, a directive inside a string no longer silences diagnostics, and
+  block comments between a directive and its code are skipped.
 
 ### Added
 
@@ -65,6 +79,9 @@ contain breaking changes).
   (replacing inherent `from_str`/`to_string`), are `Copy`, and are
   `#[non_exhaustive]`. `HtmlAttribute::value` is an `AttrValue` (with a new
   `Bare` variant) instead of an always-`Some` `Option`.
+- **Breaking:** `HtmlElement::is_focusable` now includes `tabindex="-1"`; the
+  new `is_tabbable` is the Tab-order check that `no-aria-hidden-on-focusable`
+  and `interactive-supports-focus` use. Also new: `is_set` and `is_labelable`.
 - `rayon` is behind a new `parallel` feature (enabled by `cli`); the unused
   `quote` and `walkdir` dependencies were removed.
 - Minimum supported Rust version: 1.88.
