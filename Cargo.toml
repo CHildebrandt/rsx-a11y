@@ -11,16 +11,17 @@ repository = "https://github.com/CHildebrandt/rsx-a11y"
 
 [features]
 default = ["cli"]
-cli = ["clap", "walkdir", "colored", "rayon", "dunce"]
+## The `rsx-a11y` command-line tool.
+cli = ["dep:clap", "dep:colored", "dep:dunce", "parallel"]
+## Lint files in parallel with rayon.
+parallel = ["dep:rayon"]
 
 [dependencies]
 syn = { version = "2", features = ["full", "visit", "parsing"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
-quote = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 clap = { version = "4", features = ["derive"], optional = true }
-walkdir = { version = "2", optional = true }
 colored = { version = "3", optional = true }
 rayon = { version = "1", optional = true }
 dunce = { version = "1", optional = true }

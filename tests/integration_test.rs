@@ -142,7 +142,7 @@ fn test_leptos_invalid_role_detected() {
 
 #[test]
 fn test_check_project_finds_fixtures() {
-    let summary = check_project(Path::new("tests/fixtures"));
+    let summary = check_project(Path::new("tests/fixtures")).unwrap();
 
     assert!(
         summary.files_checked >= 2,
@@ -162,7 +162,7 @@ fn test_check_project_finds_fixtures() {
 
 #[test]
 fn test_check_project_diagnostics_are_sorted() {
-    let summary = check_project(Path::new("tests/fixtures"));
+    let summary = check_project(Path::new("tests/fixtures")).unwrap();
 
     for window in summary.diagnostics.windows(2) {
         let a = &window[0];
@@ -182,7 +182,7 @@ fn test_check_project_diagnostics_are_sorted() {
 
 #[test]
 fn test_check_project_single_file() {
-    let summary = check_project(Path::new("tests/fixtures/yew_component.rs"));
+    let summary = check_project(Path::new("tests/fixtures/yew_component.rs")).unwrap();
 
     assert_eq!(summary.files_checked, 1);
     assert!(!summary.diagnostics.is_empty());
@@ -194,7 +194,7 @@ fn test_check_project_single_file() {
 
 #[test]
 fn test_check_project_filter_by_severity() {
-    let summary = check_project(Path::new("tests/fixtures"));
+    let summary = check_project(Path::new("tests/fixtures")).unwrap();
 
     let errors: Vec<_> = summary
         .diagnostics
@@ -223,7 +223,7 @@ fn test_check_project_filter_by_severity() {
 
 #[test]
 fn test_check_project_filter_by_rule() {
-    let summary = check_project(Path::new("tests/fixtures"));
+    let summary = check_project(Path::new("tests/fixtures")).unwrap();
 
     let alt_text_issues: Vec<_> = summary
         .diagnostics

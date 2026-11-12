@@ -1442,14 +1442,12 @@ dependencies = [
  "colored",
  "dunce",
  "proc-macro2",
- "quote",
  "rayon",
  "rstml",
  "serde",
  "serde_json",
  "strum",
  "syn",
- "walkdir",
 ]
 
 [[package]]

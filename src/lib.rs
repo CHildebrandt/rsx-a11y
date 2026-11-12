@@ -1,62 +1,31 @@
-//! rsx-a11y: A linting tool for ARIA and accessibility attributes
-//! in Rust web frameworks (Yew, Leptos, Dioxus).
+//! rsx-a11y: a linter for ARIA and accessibility issues in Rust web
+//! frameworks (Yew, Leptos, Dioxus).
 //!
-//! This crate parses Rust source files, finds macro invocations containing
-//! HTML-like RSX content (via [`rstml`](https://docs.rs/rstml)), and checks
-//! for accessibility issues based on the WAI-ARIA 1.2 specification.
+//! The crate parses Rust source files, finds the markup inside `html!`,
+//! `view!` and `rsx!` macro invocations, and checks it against
+//! WAI-ARIA 1.2 and common accessibility rules inspired by
+//! [`eslint-plugin-jsx-a11y`](https://github.com/jsx-eslint/eslint-plugin-jsx-a11y).
+//! See [`Rule`] for the full list of rules.
 //!
-//! # Supported Lints (36)
+//! # Linting a project in a test
 //!
-//! ## Errors (10)
+//! ```rust,no_run
+//! use rsx_a11y::prelude::*;
 //!
-//! | Lint ID | Description |
-//! |---------|-------------|
-//! | `alt-text` | Elements requiring alt text (`<img>`, `<area>`, `<input type="image">`, `<object>`) must have it |
-//! | `aria-props` | Unknown `aria-*` attribute |
-//! | `aria-proptypes` | Invalid value for a known ARIA attribute |
-//! | `aria-role` | Unknown or abstract WAI-ARIA role |
-//! | `aria-unsupported-elements` | ARIA on elements that don't support it |
-//! | `autocomplete-valid` | Invalid `autocomplete` attribute value |
-//! | `lang` | Invalid BCP 47 language tag |
-//! | `no-aria-hidden-on-focusable` | `aria-hidden="true"` on a focusable element |
-//! | `no-distracting-elements` | `<marquee>` or `<blink>` used |
-//! | `role-has-required-aria-props` | Missing required ARIA properties for a given role |
+//! let summary = check_project(concat!(env!("CARGO_MANIFEST_DIR"), "/src")).unwrap();
+//! assert!(summary.is_clean(), "accessibility issues found:\n{summary}");
+//! ```
 //!
-//! ## Warnings (25)
+//! # Linting a snippet
 //!
-//! | Lint ID | Description |
-//! |---------|-------------|
-//! | `anchor-ambiguous-text` | `<a>` text must not be generic ("click here", "here", etc.) |
-//! | `anchor-has-content` | `<a>` without discernible text |
-//! | `anchor-is-valid` | `<a>` with `href="#"`, empty `href`, or `javascript:void(0)` |
-//! | `aria-activedescendant-has-tabindex` | Non-interactive element with `aria-activedescendant` needs `tabindex` |
-//! | `click-events-have-key-events` | Click handler without keyboard handler on non-interactive element |
-//! | `control-has-associated-label` | Interactive controls must have a text label |
-//! | `heading-has-content` | Empty heading element |
-//! | `html-has-lang` | `<html>` without `lang` attribute |
-//! | `iframe-has-title` | `<iframe>` without `title` |
-//! | `img-redundant-alt` | `<img>` alt text contains "image", "picture", "photo" |
-//! | `interactive-supports-focus` | Element with interactive role and event handler must be focusable |
-//! | `label-has-associated-control` | `<label>` without associated form control |
-//! | `media-has-caption` | `<video>` or `<audio>` without captions |
-//! | `mouse-events-have-key-events` | `onmouseover`/`onmouseout` without `onfocus`/`onblur` |
-//! | `no-access-key` | `accesskey` attribute used |
-//! | `no-autofocus` | `autofocus` attribute used |
-//! | `no-interactive-element-to-noninteractive-role` | Interactive element assigned a non-interactive role |
-//! | `no-noninteractive-element-interactions` | Non-interactive element with event handlers |
-//! | `no-noninteractive-element-to-interactive-role` | Non-interactive element assigned an interactive role |
-//! | `no-noninteractive-tabindex` | `tabindex` on non-interactive element |
-//! | `no-redundant-roles` | Explicit role matches element's implicit role |
-//! | `no-static-element-interactions` | Static element with event handlers but no role |
-//! | `role-supports-aria-props` | ARIA property not supported by the element's role |
-//! | `scope` | `scope` on non-`<th>` element |
-//! | `tabindex-no-positive` | `tabindex` > 0 |
+//! ```rust
+//! use rsx_a11y::prelude::*;
 //!
-//! ## Info (1)
-//!
-//! | Lint ID | Description |
-//! |---------|-------------|
-//! | `prefer-tag-over-role` | Prefer semantic HTML element over ARIA role |
+//! let diagnostics = check_source(r#"fn app() { html! { <img src="cat.png" /> } }"#, "app.rs").unwrap();
+//! assert_eq!(diagnostics[0].rule, Rule::AltText);
+//! ```
+
+#![warn(missing_docs)]
 
 pub mod diagnostics;
 pub mod dom;
@@ -64,113 +33,311 @@ pub mod lints;
 pub mod parser;
 pub mod prelude;
 
+use std::fmt;
+use std::io;
 use std::path::{Path, PathBuf};
 
-use lints::LintDiagnostic;
+use lints::{LintDiagnostic, Rule, Severity};
 use parser::ParseError;
 
-/// Summary returned by [`check_project`] containing every diagnostic found,
-/// any parse errors, and the number of files that contained lintable elements.
+/// Which diagnostics to keep.
 ///
-/// No filtering is applied — callers can filter `diagnostics` by
-/// [`Rule`](lints::Rule), [`Severity`](lints::Severity), file path, etc.
-/// after the fact.
-#[derive(Debug, Clone, serde::Serialize)]
+/// The default keeps every diagnostic from every rule.
+///
+/// ```
+/// use rsx_a11y::prelude::*;
+///
+/// let options = LintOptions::default()
+///     .skip([Rule::NoAutofocus])
+///     .min_severity(Severity::Warning);
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LintOptions {
+    only: Option<Vec<Rule>>,
+    skip: Vec<Rule>,
+    min_severity: Severity,
+}
+
+impl Default for LintOptions {
+    fn default() -> Self {
+        Self {
+            only: None,
+            skip: Vec::new(),
+            min_severity: Severity::Info,
+        }
+    }
+}
+
+impl LintOptions {
+    /// Only run the given rules.
+    pub fn only(mut self, rules: impl IntoIterator<Item = Rule>) -> Self {
+        self.only = Some(rules.into_iter().collect());
+        self
+    }
+
+    /// Do not run the given rules.
+    pub fn skip(mut self, rules: impl IntoIterator<Item = Rule>) -> Self {
+        self.skip.extend(rules);
+        self
+    }
+
+    /// Drop diagnostics less severe than `severity`.
+    pub fn min_severity(mut self, severity: Severity) -> Self {
+        self.min_severity = severity;
+        self
+    }
+
+    /// Whether `rule` is enabled by these options.
+    pub fn is_enabled(&self, rule: Rule) -> bool {
+        self.only.as_ref().is_none_or(|only| only.contains(&rule))
+            && !self.skip.contains(&rule)
+            && rule.severity() >= self.min_severity
+    }
+
+    /// Whether `diagnostic` passes these options.
+    pub fn keep(&self, diagnostic: &LintDiagnostic) -> bool {
+        self.is_enabled(diagnostic.rule) && diagnostic.severity >= self.min_severity
+    }
+}
+
+/// The result of linting a set of files.
+///
+/// Implements [`Display`](fmt::Display) as a plain-text report, which makes
+/// it convenient in assertion messages.
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct LintSummary {
-    /// All lint diagnostics found, sorted by file → line → column.
+    /// All diagnostics found, sorted by file → line → column.
     pub diagnostics: Vec<LintDiagnostic>,
-    /// Files that could not be parsed.
+    /// Files that could not be read or parsed. These files were **not** linted.
     pub parse_errors: Vec<ParseError>,
-    /// Number of files that contained at least one lintable RSX element.
+    /// Number of `.rs` files that were scanned.
+    pub files_scanned: usize,
+    /// Number of files that contained at least one lintable element.
     pub files_checked: usize,
 }
 
-/// Lint an entire project (or single file) at `path` and return a [`LintSummary`].
-///
-/// This is the primary entry point for programmatic / unit-test usage.
-/// It discovers all `.rs` files under `path` (skipping `target/`,
-/// `node_modules/`, and dot-directories), parses each file for RSX macros,
-/// and runs every lint rule.
-///
-/// # Example
-///
-/// ```rust,no_run
-/// use std::path::Path;
-/// use rsx_a11y::{check_project, LintSummary};
-/// use rsx_a11y::lints::Severity;
-///
-/// let summary = check_project(Path::new("."));
-/// let errors: Vec<_> = summary.diagnostics
-///     .iter()
-///     .filter(|d| d.severity == Severity::Error)
-///     .collect();
-/// assert!(errors.is_empty(), "accessibility errors found: {errors:#?}");
-/// ```
-pub fn check_project(path: &Path) -> LintSummary {
-    let rust_files = collect_rust_files(path);
-    let mut diagnostics: Vec<LintDiagnostic> = Vec::new();
-    let mut parse_errors: Vec<ParseError> = Vec::new();
-    let mut files_checked: usize = 0;
-
-    for file in &rust_files {
-        match parser::parse_file(file) {
-            Ok(elements) => {
-                if !elements.is_empty() {
-                    files_checked += 1;
-                    diagnostics.extend(lints::run_all_lints(&elements));
-                }
-            }
-            Err(e) => parse_errors.push(e),
-        }
+impl LintSummary {
+    /// `true` when there are no error-level diagnostics and every file parsed.
+    pub fn is_clean(&self) -> bool {
+        self.parse_errors.is_empty() && self.errors().next().is_none()
     }
 
-    diagnostics.sort_unstable_by(|a, b| {
-        a.file
-            .cmp(&b.file)
-            .then(a.line.cmp(&b.line))
-            .then(a.column.cmp(&b.column))
-    });
+    /// Diagnostics with [`Severity::Error`].
+    pub fn errors(&self) -> impl Iterator<Item = &LintDiagnostic> {
+        self.diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+    }
 
-    LintSummary {
-        diagnostics,
-        parse_errors,
-        files_checked,
+    /// Diagnostics produced by `rule`.
+    pub fn by_rule(&self, rule: Rule) -> impl Iterator<Item = &LintDiagnostic> {
+        self.diagnostics.iter().filter(move |d| d.rule == rule)
     }
 }
 
-/// Recursively collect `.rs` files from `path`, skipping common non-source
-/// directories (`target/`, `node_modules/`, dot-directories).
-fn collect_rust_files(path: &Path) -> Vec<PathBuf> {
-    if path.is_file() {
-        return if path.extension().is_some_and(|ext| ext == "rs") {
+impl fmt::Display for LintSummary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for d in &self.diagnostics {
+            writeln!(
+                f,
+                "{}: {} [{}]\n  --> {}:{}:{}",
+                d.severity, d.message, d.rule, d.file, d.line, d.column
+            )?;
+        }
+        for e in &self.parse_errors {
+            writeln!(f, "error: {e}")?;
+        }
+        Ok(())
+    }
+}
+
+/// Lint a single Rust source string with every rule.
+///
+/// `file_name` is only used to label diagnostics. Diagnostics are sorted by
+/// line and column.
+pub fn check_source(source: &str, file_name: &str) -> Result<Vec<LintDiagnostic>, ParseError> {
+    let elements = parser::parse_source(source, file_name)?;
+    let mut diagnostics: Vec<_> = lints::run_all_lints(&elements).collect();
+    sort_diagnostics(&mut diagnostics);
+    Ok(diagnostics)
+}
+
+/// Lint every `.rs` file under `path` (or `path` itself if it is a file)
+/// with every rule.
+///
+/// This is the primary entry point for programmatic / unit-test usage.
+/// `target/`, `node_modules/` and dot-directories are skipped. Files that
+/// cannot be parsed are reported in [`LintSummary::parse_errors`].
+///
+/// # Errors
+///
+/// Returns an error if `path` does not exist or cannot be read, so a typo in
+/// the path cannot make a test pass vacuously.
+pub fn check_project(path: impl AsRef<Path>) -> io::Result<LintSummary> {
+    check_project_with(path, &LintOptions::default())
+}
+
+/// Like [`check_project`], keeping only diagnostics allowed by `options`.
+///
+/// # Errors
+///
+/// Returns an error if `path` does not exist or cannot be read.
+pub fn check_project_with(
+    path: impl AsRef<Path>,
+    options: &LintOptions,
+) -> io::Result<LintSummary> {
+    let files = collect_rust_files(path.as_ref())?;
+    Ok(check_files(&files, options))
+}
+
+/// Lint the given files, keeping only diagnostics allowed by `options`.
+///
+/// Files are processed in parallel when the `parallel` feature is enabled.
+pub fn check_files(files: &[PathBuf], options: &LintOptions) -> LintSummary {
+    let lint_one = |file: &PathBuf| -> Result<Option<Vec<LintDiagnostic>>, ParseError> {
+        let elements = parser::parse_file(file)?;
+        if elements.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(
+            lints::run_all_lints(&elements)
+                .filter(|d| options.keep(d))
+                .collect(),
+        ))
+    };
+
+    #[cfg(feature = "parallel")]
+    let results: Vec<_> = {
+        use rayon::prelude::*;
+        files.par_iter().map(lint_one).collect()
+    };
+    #[cfg(not(feature = "parallel"))]
+    let results: Vec<_> = files.iter().map(lint_one).collect();
+
+    let mut summary = LintSummary {
+        files_scanned: files.len(),
+        ..LintSummary::default()
+    };
+    for result in results {
+        match result {
+            Ok(Some(diagnostics)) => {
+                summary.files_checked += 1;
+                summary.diagnostics.extend(diagnostics);
+            }
+            Ok(None) => {}
+            Err(e) => summary.parse_errors.push(e),
+        }
+    }
+    sort_diagnostics(&mut summary.diagnostics);
+    summary.parse_errors.sort_by(|a, b| a.file.cmp(&b.file));
+    summary
+}
+
+fn sort_diagnostics(diagnostics: &mut [LintDiagnostic]) {
+    diagnostics.sort_by(|a, b| {
+        (a.file.as_str(), a.line, a.column).cmp(&(b.file.as_str(), b.line, b.column))
+    });
+}
+
+/// Find every `.rs` file under `path`, in sorted order.
+///
+/// If `path` is a file, it is returned when it has an `.rs` extension.
+/// `target/`, `node_modules/` and dot-directories below `path` are skipped,
+/// and symbolic links (to files or directories) are not followed, so results
+/// always live under `path`.
+///
+/// # Errors
+///
+/// Returns an error if `path` does not exist or cannot be read.
+pub fn collect_rust_files(path: &Path) -> io::Result<Vec<PathBuf>> {
+    let meta = std::fs::metadata(path)?;
+    if meta.is_file() {
+        let is_rs = path.extension().is_some_and(|ext| ext == "rs");
+        return Ok(if is_rs {
             vec![path.to_path_buf()]
         } else {
             Vec::new()
-        };
+        });
     }
-
     let mut files = Vec::new();
-    collect_rust_files_recursive(path, &mut files);
-    files
+    collect_recursive(path, &mut files)?;
+    files.sort();
+    Ok(files)
 }
 
-fn collect_rust_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
+fn collect_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        // `DirEntry::file_type` does not follow symlinks.
+        let file_type = entry.file_type()?;
         let path = entry.path();
-        if path.is_dir() {
+        if file_type.is_dir() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
             if matches!(name.as_ref(), "target" | "node_modules") || name.starts_with('.') {
                 continue;
             }
-            collect_rust_files_recursive(&path, out);
-        } else if path.is_file() && path.extension().is_some_and(|ext| ext == "rs") {
+            collect_recursive(&path, out)?;
+        } else if file_type.is_file() && path.extension().is_some_and(|ext| ext == "rs") {
+            // Symlinked files are skipped like symlinked directories: their
+            // target may live outside the scanned tree.
             out.push(path);
         }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn options_filter_rules_and_severity() {
+        let opts = LintOptions::default()
+            .only([Rule::AltText, Rule::NoAutofocus])
+            .skip([Rule::NoAutofocus]);
+        assert!(opts.is_enabled(Rule::AltText));
+        assert!(!opts.is_enabled(Rule::NoAutofocus));
+        assert!(!opts.is_enabled(Rule::AriaRole));
+
+        let errors_only = LintOptions::default().min_severity(Severity::Error);
+        assert!(errors_only.is_enabled(Rule::AltText));
+        assert!(!errors_only.is_enabled(Rule::NoAutofocus));
+    }
+
+    #[test]
+    fn check_project_errors_on_missing_path() {
+        let err = check_project("definitely/not/a/real/path").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinks_outside_the_root_are_not_collected() {
+        let base = std::env::temp_dir().join(format!("rsx-a11y-symlink-{}", std::process::id()));
+        let root = base.join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(base.join("outside.rs"), "fn x() {}").unwrap();
+        std::fs::write(root.join("inside.rs"), "fn y() {}").unwrap();
+        std::os::unix::fs::symlink(base.join("outside.rs"), root.join("linked.rs")).unwrap();
+        std::os::unix::fs::symlink(&base, root.join("linked_dir")).unwrap();
+
+        let files = collect_rust_files(&root).unwrap();
+        let _ = std::fs::remove_dir_all(&base);
+        assert_eq!(files, [root.join("inside.rs")]);
+    }
+
+    #[test]
+    fn check_source_sorts_by_position() {
+        let src = r#"fn c() { html! { <div>
+            <img src="b.png" />
+            <img src="a.png" />
+        </div> } }"#;
+        let diags = check_source(src, "x.rs").unwrap();
+        assert!(
+            diags
+                .windows(2)
+                .all(|w| (w[0].line, w[0].column) <= (w[1].line, w[1].column))
+        );
     }
 }

@@ -130,7 +130,7 @@ fn write_pretty(report: &Report<'_>, color: bool, w: &mut dyn Write) -> io::Resu
             label,
             p.paint(":", Style::Bold),
             diag.message,
-            p.paint(&format!("[{}]", diag.rule.to_string()), Style::Dimmed)
+            p.paint(&format!("[{}]", diag.rule), Style::Dimmed)
         )?;
         writeln!(
             w,
@@ -142,6 +142,14 @@ fn write_pretty(report: &Report<'_>, color: bool, w: &mut dyn Write) -> io::Resu
         )?;
         if let Some(help) = &diag.help {
             writeln!(w, "  {} {}", p.paint("help:", Style::Help), help)?;
+        }
+        let reference = diag
+            .rule
+            .guidelines()
+            .first()
+            .or_else(|| diag.rule.resources().first());
+        if let Some(url) = reference {
+            writeln!(w, "  {} {}", p.paint("see:", Style::Dimmed), url)?;
         }
         writeln!(w)?;
     }
