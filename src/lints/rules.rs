@@ -129,15 +129,19 @@ fn anchor_ambiguous_text(el: &HtmlElement, cx: &mut Emitter<'_>) {
         return;
     }
     const AMBIGUOUS: &[&str] = &["click here", "here", "link", "a link", "learn more"];
-    // The accessible name: `aria-label` wins over content. `aria-labelledby`
-    // and dynamic content cannot be resolved statically.
-    let (name, attr) = match el.attr(&A::Aria(Aria::Label)) {
-        Some(attr) => match attr.value.as_static() {
-            Some(label) => (label.to_string(), Some(attr)),
-            None => return,
-        },
-        None if el.has_attr(&A::Aria(Aria::LabelledBy)) || el.has_dynamic_content => return,
-        None => (el.text.clone(), None),
+    // The accessible name: `aria-labelledby`, then `aria-label`, then the
+    // content. `aria-labelledby` (which spread attributes may supply) and
+    // dynamic content cannot be resolved statically.
+    if el.may_have_attr(&A::Aria(Aria::LabelledBy)) {
+        return;
+    }
+    let label = el.attr(&A::Aria(Aria::Label));
+    let (name, attr) = match label.map(|a| (a, a.value.as_static())) {
+        Some((_, None)) => return,
+        // An empty `aria-label` is ignored.
+        Some((attr, Some(label))) if !label.trim().is_empty() => (label.to_string(), Some(attr)),
+        _ if el.has_dynamic_content => return,
+        _ => (el.text.clone(), None),
     };
     if !AMBIGUOUS.contains(&normalize_text(&name).as_str()) {
         return;
@@ -292,12 +296,23 @@ fn autocomplete_valid(el: &HtmlElement, cx: &mut Emitter<'_>) {
     if !matches!(el.tag, Tag::Input | Tag::Select | Tag::Textarea | Tag::Form) {
         return;
     }
+    // A <form> only takes "on" or "off"; its controls take autofill tokens.
+    let form = el.tag == Tag::Form;
     for (attr, val) in static_attrs(el, &A::Autocomplete) {
-        if !is_valid_autocomplete(val) {
+        let valid = if form {
+            matches!(val.trim().to_ascii_lowercase().as_str(), "on" | "off")
+        } else {
+            is_valid_autocomplete(val)
+        };
+        if !valid {
             cx.on_attr(
                 attr,
                 format!("Invalid `autocomplete` value \"{val}\" on <{}>.", el.tag),
-                "Use a valid autocomplete token such as \"name\", \"email\", \"work tel\", \"shipping postal-code\", \"current-password\" or \"off\".",
+                if form {
+                    "Use \"on\" or \"off\". Autofill tokens such as \"email\" belong on the form's controls."
+                } else {
+                    "Use a valid autocomplete token such as \"name\", \"email\", \"work tel\", \"shipping postal-code\", \"current-password\" or \"off\"."
+                },
             );
         }
     }
@@ -343,8 +358,9 @@ fn control_has_associated_label(el: &HtmlElement, cx: &mut Emitter<'_>) {
         Tag::Select | Tag::Textarea | Tag::Meter | Tag::Output | Tag::Progress => {}
         _ => return,
     }
-    let inside_label = cx.doc.ancestors(el).any(|a| a.tag == Tag::Label);
-    let labelled = el.may_have_any_attr(&NAME_ATTRS) || inside_label || cx.doc.is_label_target(el);
+    let labelled = el.may_have_any_attr(&NAME_ATTRS)
+        || cx.doc.is_labelled_by_ancestor(el)
+        || cx.doc.is_label_target(el);
     if !labelled && !el.is_aria_hidden() {
         cx.on_element(
             format!(
@@ -413,7 +429,7 @@ fn interactive_supports_focus(el: &HtmlElement, cx: &mut Emitter<'_>) {
         return;
     }
     let interactive_role = el.explicit_role().is_some_and(|r| r.is_interactive());
-    if interactive_role && el.has_event_handler() && !el.is_focusable() {
+    if interactive_role && el.has_event_handler() && !el.is_tabbable() {
         cx.on_element(
             format!(
                 "<{}> with an interactive role must be focusable. Add a `tabindex` attribute.",
@@ -428,21 +444,9 @@ fn label_has_associated_control(el: &HtmlElement, cx: &mut Emitter<'_>) {
     if el.tag != Tag::Label {
         return;
     }
-    const CONTROLS: &[Tag] = &[
-        Tag::Input,
-        Tag::Meter,
-        Tag::Output,
-        Tag::Progress,
-        Tag::Select,
-        Tag::Textarea,
-    ];
     let has_control = el.may_have_attr(&A::For)
         || el.has_dynamic_content
-        || cx
-            .doc
-            .descendants(el)
-            .iter()
-            .any(|d| CONTROLS.contains(&d.tag));
+        || cx.doc.descendants(el).iter().any(|d| d.is_labelable());
     let has_text =
         !el.text.is_empty() || el.has_dynamic_content || el.may_have_any_attr(&LABEL_ATTRS);
 
@@ -535,7 +539,9 @@ fn no_access_key(el: &HtmlElement, cx: &mut Emitter<'_>) {
 }
 
 fn no_aria_hidden_on_focusable(el: &HtmlElement, cx: &mut Emitter<'_>) {
-    if !el.is_focusable() {
+    // Like axe's aria-hidden-focus and eslint-plugin-jsx-a11y, this is about
+    // the Tab order: an element taken out of it with `tabindex="-1"` passes.
+    if !el.is_tabbable() {
         return;
     }
     if let Some(attr) = el.attr(&A::Aria(Aria::Hidden))
@@ -547,7 +553,7 @@ fn no_aria_hidden_on_focusable(el: &HtmlElement, cx: &mut Emitter<'_>) {
                 "<{}> element is focusable but has `aria-hidden=\"true\"`, which hides it from assistive technologies.",
                 el.tag
             ),
-            "Remove `aria-hidden=\"true\"`, or make the element non-focusable (e.g. `tabindex=\"-1\"`).",
+            "Remove `aria-hidden=\"true\"`, or take the element out of the tab order with `tabindex=\"-1\"` (or `disabled`, for a form control).",
         );
     }
 }
@@ -763,21 +769,24 @@ fn role_has_required_aria_props(el: &HtmlElement, cx: &mut Emitter<'_>) {
     };
     // Native semantics already supply the state: the level of <h1>-<h6>,
     // or the checked state of a checkbox/radio input given a toggle role.
-    if el.implicit_role() == Some(role) || (role == Role::Heading && el.tag.is_heading()) {
-        return;
-    }
     let checkable_input =
         el.tag == Tag::Input && matches!(el.input_type().as_deref(), Some("checkbox" | "radio"));
     let toggle_role = matches!(
         role,
         Role::Checkbox | Role::Radio | Role::Switch | Role::MenuItemCheckbox | Role::MenuItemRadio
     );
-    if checkable_input && toggle_role {
-        return;
-    }
+    let native = el.implicit_role() == Some(role)
+        || (role == Role::Heading && el.tag.is_heading())
+        || (checkable_input && toggle_role);
 
-    let mut required: Vec<Aria> = role.required_aria_props().to_vec();
-    if role == Role::Separator && el.is_focusable() {
+    let mut required: Vec<Aria> = if native {
+        Vec::new()
+    } else {
+        role.required_aria_props().to_vec()
+    };
+    // A focusable separator is a widget that needs a value, which no element
+    // (not even <hr>) supplies natively.
+    if role == Role::Separator && el.is_focusable() && !required.contains(&Aria::ValueNow) {
         required.push(Aria::ValueNow);
     }
     let missing: Vec<String> = required
